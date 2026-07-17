@@ -17,9 +17,18 @@ from dingtalk_handler import open_dingtalk_checkin
 
 
 # --- 日志配置 ---
+def _get_app_data_dir() -> Path:
+    """获取应用数据目录，跨平台兼容"""
+    if sys.platform == "win32":
+        return Path(os.environ.get("APPDATA", ""))
+    else:
+        # Linux/macOS: ~/.local/share/DesktopPet
+        return Path.home() / ".local" / "share"
+
+
 def setup_logging():
     """配置日志"""
-    log_dir = Path(os.environ.get("APPDATA", "")) / "DesktopPet" / "logs"
+    log_dir = _get_app_data_dir() / "DesktopPet" / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
     
     log_file = log_dir / "pet.log"

@@ -8,6 +8,21 @@ from pathlib import Path
 from typing import Dict, Any, Optional
 
 
+def _deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
+    """递归深合并两个字典，override 优先，缺失字段用 base 填充"""
+    result = base.copy()
+    for key, value in override.items():
+        if (
+            key in result
+            and isinstance(result[key], dict)
+            and isinstance(value, dict)
+        ):
+            result[key] = _deep_merge(result[key], value)
+        else:
+            result[key] = value
+    return result
+
+
 class ConfigManager:
     def __init__(self, config_path: Optional[str] = None):
         if config_path:
@@ -31,15 +46,9 @@ class ConfigManager:
             return self._default_config()
 
     def _merge_defaults(self, config: Dict[str, Any]) -> Dict[str, Any]:
-        """合并默认值"""
+        """递归合并默认值，确保嵌套字段也被填充"""
         defaults = self._default_config()
-        
-        if "pet" not in config:
-            config["pet"] = defaults["pet"]
-        if "reminders" not in config:
-            config["reminders"] = defaults["reminders"]
-            
-        return config
+        return _deep_merge(defaults, config)
 
     def _default_config(self) -> Dict[str, Any]:
         return {

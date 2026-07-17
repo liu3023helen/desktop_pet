@@ -124,11 +124,11 @@ class PetWindow(QWidget):
         self.animation_player = AnimationPlayer()
         self.animation_player.bind(self.animation_label)
 
-        # 预加载 cheer 动画
-        self.animation_player.load_animation("cheer", fps=8)
+        # 预加载 cheer 动画（2帧，低帧率让每帧停留更久）
+        self.animation_player.load_animation("cheer", fps=3)
 
         # 默认播放 cheer
-        self.animation_player.play("cheer", fps=8, loop=True)
+        self.animation_player.play("cheer", fps=3, loop=True)
 
         # 运动状态
         self._drag_pos = None
@@ -224,17 +224,17 @@ class PetWindow(QWidget):
 
         # 1. 切换动画
         if animation in self.animation_player._frames_cache or self.animation_player.load_animation(animation):
-            self.animation_player.play(animation, fps=8, loop=True)
+            self.animation_player.play(animation, fps=3, loop=True)
         else:
             # 如果没有对应动画，用cheer代替
-            self.animation_player.play("cheer", fps=8, loop=True)
+            self.animation_player.play("cheer", fps=3, loop=True)
 
         # 2. 弹出系统通知
         self.tray_icon.showMessage(name, message, QSystemTrayIcon.Information, 5000)
 
         # 3. 10秒后恢复默认动画（使用 weakref 避免程序快速退出时悬空引用）
         weak_self = weakref.ref(self)
-        QTimer.singleShot(10000, lambda ws=weak_self: ws() and ws().animation_player.play("cheer", fps=8, loop=True))
+        QTimer.singleShot(10000, lambda ws=weak_self: ws() and ws().animation_player.play("cheer", fps=3, loop=True))
 
     # --- 鼠标拖拽 ---
     def mousePressEvent(self, event):

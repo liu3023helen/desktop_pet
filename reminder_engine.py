@@ -12,6 +12,11 @@ from PyQt5.QtCore import QObject, pyqtSignal, QThread
 from PyQt5.QtWidgets import QMessageBox
 
 
+def _date_key(dt: datetime) -> str:
+    """返回日期字符串 YYYY-MM-DD"""
+    return dt.strftime("%Y-%m-%d")
+
+
 class ReminderEngine(QThread):
     """提醒引擎 - 在独立线程中运行定时调度"""
 
@@ -30,8 +35,10 @@ class ReminderEngine(QThread):
         # 动作处理器注册表
         self._handlers: Dict[str, Callable] = action_handlers or {}
 
-        # 已触发的提醒记录（防止同一天重复触发）
+        # 已触发的提醒记录（防止同一天重复触发），格式: "YYYY-MM-DD_HH:MM"
         self._triggered_today: set = set()
+        # 上次检查的日期，用于跨天重置
+        self._last_check_date: Optional[str] = None
 
     def register_handler(self, action_type: str, handler: Callable) -> None:
         """注册动作处理器"""
@@ -66,12 +73,13 @@ class ReminderEngine(QThread):
     def _check_reminders(self) -> None:
         """检查是否需要触发提醒"""
         now = datetime.now()
-        today_key = now.strftime("%Y-%m-%d")
+        today_key = _date_key(now)
 
-        # 每天零点重置已触发记录
-        if today_key != list(self._triggered_today)[:1] if self._triggered_today else False:
-            # 简单处理：只保留今天的记录
-            self._triggered_today = {k for k in self._triggered_today if k.startswith(today_key)}
+        # 跨天检测：日期变化时清空已触发记录
+        if self._last_check_date is not None and today_key != self._last_check_date:
+            print(f"[Engine] 日期变更: {self._last_check_date} -> {today_key}，重置触发记录")
+            self._triggered_today.clear()
+        self._last_check_date = today_key
 
         for reminder in self._reminders:
             if not reminder.get("enabled", False):

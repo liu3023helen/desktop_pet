@@ -95,9 +95,9 @@ class PetWindow(QWidget):
         self.config = config or {}
         logger.info("初始化宠物窗口")
 
-        # 窗口属性
+        # 窗口属性（与素材图片尺寸一致，256x256）
         self.setWindowTitle(self.config.get("name", "Pet"))
-        self.setFixedSize(128, 128)
+        self.setFixedSize(256, 256)
 
         # 无边框 + 透明 + 置顶 + 工具窗口（不在任务栏显示）
         self.setWindowFlags(
@@ -109,15 +109,16 @@ class PetWindow(QWidget):
 
         # 初始位置（屏幕右下角附近）
         screen = QApplication.primaryScreen().geometry()
-        self.move(screen.width() - 200, screen.height() - 200)
+        self.move(screen.width() - 300, screen.height() - 300)
 
         # 布局
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
 
-        # 动画标签
+        # 动画标签（自动缩放以适应窗口）
         self.animation_label = QLabel(self)
         self.animation_label.setAlignment(Qt.AlignCenter)
+        self.animation_label.setScaledContents(True)
         layout.addWidget(self.animation_label)
 
         # 动画播放器

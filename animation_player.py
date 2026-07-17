@@ -88,12 +88,15 @@ class AnimationPlayer:
 
         Args:
             name: 动画名称
-            fps: 帧率
+            fps: 帧率（自动限制在 1-60 范围）
             loop: 是否循环播放
 
         Returns:
             是否播放成功
         """
+        # 防御性校验：防止 fps=0 导致 ZeroDivisionError
+        fps = max(1, min(fps, 60))
+
         # 如果动画未加载，尝试自动加载
         if name not in self._frames_cache:
             if not self.load_animation(name, fps):

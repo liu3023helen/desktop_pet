@@ -15,10 +15,6 @@ print(f"[OK] ConfigManager: {len(cfg.get('reminders', []))} reminders loaded")
 # 2. 测试动画播放器
 from animation_player import AnimationPlayer
 ap = AnimationPlayer()
-loaded = ap.load_animation("idle")
-print(f"[OK] AnimationPlayer: idle loaded={loaded}")
-loaded = ap.load_animation("walk")
-print(f"[OK] AnimationPlayer: walk loaded={loaded}")
 loaded = ap.load_animation("cheer")
 print(f"[OK] AnimationPlayer: cheer loaded={loaded}")
 

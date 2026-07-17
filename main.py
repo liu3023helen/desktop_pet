@@ -52,7 +52,7 @@ logger = setup_logging()
 TASKBAR_RESERVE_PX = 50
 
 # 必需的动画资源目录
-REQUIRED_ANIMATIONS = ("idle", "walk", "cheer")
+REQUIRED_ANIMATIONS = ("cheer",)
 
 
 def _check_assets(pet_window) -> None:
@@ -124,12 +124,11 @@ class PetWindow(QWidget):
         self.animation_player = AnimationPlayer()
         self.animation_player.bind(self.animation_label)
 
-        # 预加载所有动画
-        for anim_name in ["idle", "walk", "cheer"]:
-            self.animation_player.load_animation(anim_name, fps=8)
+        # 预加载 cheer 动画
+        self.animation_player.load_animation("cheer", fps=8)
 
-        # 默认播放 idle
-        self.animation_player.play("idle", fps=8, loop=True)
+        # 默认播放 cheer
+        self.animation_player.play("cheer", fps=8, loop=True)
 
         # 运动状态
         self._drag_pos = None
@@ -233,9 +232,9 @@ class PetWindow(QWidget):
         # 2. 弹出系统通知
         self.tray_icon.showMessage(name, message, QSystemTrayIcon.Information, 5000)
 
-        # 3. 10秒后恢复空闲动画（使用 weakref 避免程序快速退出时悬空引用）
+        # 3. 10秒后恢复默认动画（使用 weakref 避免程序快速退出时悬空引用）
         weak_self = weakref.ref(self)
-        QTimer.singleShot(10000, lambda ws=weak_self: ws() and ws().animation_player.play("idle", fps=8, loop=True))
+        QTimer.singleShot(10000, lambda ws=weak_self: ws() and ws().animation_player.play("cheer", fps=8, loop=True))
 
     # --- 鼠标拖拽 ---
     def mousePressEvent(self, event):

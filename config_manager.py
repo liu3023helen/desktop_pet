@@ -55,7 +55,7 @@ class ConfigManager:
             "pet": {
                 "name": "小新",
                 "style": "shinchan",
-                "default_animation": "idle"
+                "default_animation": "cheer"
             },
             "reminders": []
         }

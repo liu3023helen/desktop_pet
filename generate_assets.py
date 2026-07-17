@@ -1,7 +1,7 @@
 """
 生成蜡笔小新风格的占位序列帧素材
 角色特征：圆脸、粗眉毛、红色上衣、黄色短裤
-三套动画：idle(8帧)、walk(12帧)、cheer(16帧)
+仅保留 cheer 动画（2帧）
 分辨率：128x128 PNG带alpha通道
 """
 from PIL import Image, ImageDraw, ImageFilter
@@ -12,7 +12,7 @@ from pathlib import Path
 BASE = Path(__file__).parent / "assets" / "animations"
 
 # 确保目录存在
-for anim in ["idle", "walk", "cheer"]:
+for anim in ["cheer"]:
     (BASE / anim).mkdir(parents=True, exist_ok=True)
 
 # === 蜡笔小新配色 ===
@@ -241,80 +241,6 @@ def draw_body(draw, cx, cy, scale=1.0, arm_angle=0.0, leg_offset=0.0):
                  fill=SKIN)
 
 
-def generate_idle_frames(output_dir, count=8):
-    """生成idle动画 - 轻微呼吸和眨眼"""
-    for i in range(count):
-        img = create_base()
-        draw = ImageDraw.Draw(img)
-        
-        t = i / count * math.pi * 2
-        
-        # 呼吸效果 - 身体上下微动
-        breathe = math.sin(t) * 1.5
-        
-        # 眨眼 - 每4帧眨一次
-        blink = 0.0
-        if i % 4 == 3:
-            blink = 1.0  # 闭眼
-        
-        cx, cy = 64, 50
-        
-        # 画身体
-        draw_body(draw, cx, cy + breathe, scale=1.0, arm_angle=0.1)
-        
-        # 画头
-        draw.xin_head = lambda d, *a, **k: draw_xin_head(d, *a, **k, eye_offset=0, 
-                                                          mouth_open=0.1 + 0.05*math.sin(t),
-                                                          head_tilt=math.sin(t*0.5)*2)
-        draw_xin_head(draw, cx, cy - 24 + breathe, scale=1.0, 
-                      eye_offset=0,
-                      mouth_open=0.1 + 0.05*math.sin(t),
-                      head_tilt=math.sin(t*0.5)*2)
-        
-        # 眨眼时覆盖眼睛
-        if blink > 0.5:
-            eye_y = cy - 24 - 5 + breathe
-            eye_spacing = 10
-            draw.line([(cx - eye_spacing - 4, eye_y), (cx - eye_spacing + 4, eye_y)], 
-                      fill=EYEBROW, width=2)
-            draw.line([(cx + eye_spacing - 4, eye_y), (cx + eye_spacing + 4, eye_y)], 
-                      fill=EYEBROW, width=2)
-        
-        img.save(output_dir / f"frame_{i:03d}.png")
-    print(f"Generated {count} idle frames in {output_dir}")
-
-
-def generate_walk_frames(output_dir, count=12):
-    """生成walk动画 - 走路摆动"""
-    for i in range(count):
-        img = create_base()
-        draw = ImageDraw.Draw(img)
-        
-        t = i / count * math.pi * 2
-        
-        cx, cy = 64, 48
-        
-        # 走路时身体上下起伏
-        bounce = abs(math.sin(t)) * 3
-        
-        # 手臂摆动
-        arm_ang = math.sin(t) * 0.5
-        
-        # 腿部运动
-        leg_off = math.sin(t) * 4
-        
-        # 头部轻微转动
-        head_tilt = math.sin(t * 0.5) * 3
-        
-        draw_body(draw, cx, cy - 24 + bounce, scale=0.95, 
-                  arm_angle=arm_ang, leg_offset=leg_off)
-        draw_xin_head(draw, cx, cy - 24 + bounce, scale=1.0,
-                      eye_offset=math.sin(t*2)*0.5,
-                      mouth_open=0.15,
-                      head_tilt=head_tilt)
-        
-        img.save(output_dir / f"frame_{i:03d}.png")
-    print(f"Generated {count} walk frames in {output_dir}")
 
 
 def generate_cheer_frames(output_dir, count=16):
@@ -353,10 +279,7 @@ def generate_cheer_frames(output_dir, count=16):
 if __name__ == "__main__":
     print("Generating Shin-chan style sprite frames...")
     
-    generate_idle_frames(BASE / "idle", 8)
-    generate_walk_frames(BASE / "walk", 12)
-    generate_cheer_frames(BASE / "cheer", 16)
+    generate_cheer_frames(BASE / "cheer", 2)
     
-    total = 8 + 12 + 16
-    print(f"\nDone! Generated {total} frames total.")
+    print(f"\nDone! Generated 2 cheer frames.")
     print(f"Output directory: {BASE}")

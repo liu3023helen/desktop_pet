@@ -1,6 +1,7 @@
 """
-桌面宠物 - Pygame 版本
-透明背景悬浮窗口，序列帧动画，可拖拽，可扩展提醒系统
+桌面宠物 - Pygame 简化版
+无边框透明小窗口，固定在屏幕右下角
+只显示欢呼跳跃动画 + 提醒触发
 """
 import os
 import sys
@@ -19,6 +20,14 @@ sys.path.insert(0, str(BASE_DIR))
 from config_manager import ConfigManager
 from reminder_engine import ReminderEngine
 from pet_renderer import PetRenderer
+
+# ============================================================
+# 配置
+# ============================================================
+WINDOW_SIZE = 256       # 窗口尺寸（正方形）
+BG_COLOR = (0, 0, 0)    # 纯黑背景（将设为透明色键）
+FPS = 60
+ANIMATION_FPS = 2       # 动画帧率（每秒2帧，每帧0.5秒）
 
 # ============================================================
 # 日志配置
@@ -47,8 +56,6 @@ DEFAULT_DINGTALK_PROTOCOL = "dingtalk://dingtalkclient/page/link?pc_slide=false&
 def open_dingtalk(reminder_config: Dict[str, Any]) -> bool:
     """打开钉钉打卡页面"""
     target_url = reminder_config.get("action_target", DEFAULT_DINGTALK_PROTOCOL)
-
-    # 方案1: 尝试协议启动客户端
     try:
         logger.info(f"尝试启动钉钉客户端: {target_url}")
         subprocess.Popen(
@@ -61,8 +68,6 @@ def open_dingtalk(reminder_config: Dict[str, Any]) -> bool:
         return True
     except Exception as e:
         logger.error(f"启动钉钉客户端异常: {e}")
-
-    # 方案2: 浏览器打开网页版
     return open_browser(reminder_config)
 
 
@@ -80,9 +85,6 @@ def open_browser(reminder_config: Dict[str, Any]) -> bool:
         return False
 
 
-# ============================================================
-# 动作处理器注册表
-# ============================================================
 ACTION_HANDLERS = {
     "open_url": lambda cfg: open_dingtalk(cfg),
     "dingtalk": lambda cfg: open_dingtalk(cfg),
@@ -94,12 +96,12 @@ ACTION_HANDLERS = {
 # ============================================================
 def main():
     logger.info("=" * 40)
-    logger.info("Desktop Pet 启动 (Pygame)")
+    logger.info("Desktop Pet 启动 (Pygame 简化版)")
 
     # 加载配置
     config_mgr = ConfigManager()
     config = config_mgr.load()
-    logger.info(f"配置加载完成: pet={config.get('pet', {}).get('name', 'Unknown')}")
+    logger.info(f"配置加载完成")
 
     # ========================================================
     # Pygame 初始化
@@ -111,24 +113,19 @@ def main():
     info = pygame.display.Info()
     screen_w, screen_h = info.current_w, info.current_h
 
-    # 创建全屏透明窗口
-    # 使用 HWSURFACE + DOUBLEBUF + NOFRAME 实现无边框全屏
+    # 定位到屏幕右下角（通过SDL环境变量，必须在set_mode前设置）
+    window_x = screen_w - WINDOW_SIZE - 20   # 距右边20px
+    window_y = screen_h - WINDOW_SIZE - 60   # 距底部60px（避开任务栏）
+    os.environ['SDL_VIDEO_WINDOW_POS'] = f"{window_x},{window_y}"
+    logger.info(f"窗口定位: ({window_x}, {window_y})")
+
+    # 创建无边框小窗口
     screen = pygame.display.set_mode(
-        (screen_w, screen_h),
-        pygame.NOFRAME | pygame.HWSURFACE | pygame.DOUBLEBUF
+        (WINDOW_SIZE, WINDOW_SIZE),
+        pygame.NOFRAME
     )
 
-    # 设置窗口透明度（Windows）
-    # 注意：pygame本身不支持真正的透明背景窗口
-    # 这里用黑色作为色键（chroma key）模拟透明
-    screen.fill((0, 0, 0))
-    pygame.display.flip()
-
-    # 设置色键 - 黑色视为透明
-    # 实际透明效果需要操作系统支持
-    # 在Windows上可以通过 win32gui 设置分层窗口
-
-    logger.info(f"屏幕分辨率: {screen_w}x{screen_h}")
+    logger.info(f"窗口尺寸: {WINDOW_SIZE}x{WINDOW_SIZE}, 屏幕: {screen_w}x{screen_h}")
 
     # ========================================================
     # 创建渲染器
@@ -142,17 +139,15 @@ def main():
     engine_callback = None
 
     def on_reminder(reminder: Dict[str, Any]) -> None:
-        """提醒触发回调 - 在主线程中执行"""
+        """提醒触发回调"""
         nonlocal engine_callback
         engine_callback = reminder
         name = reminder.get("name", "提醒")
         action = reminder.get("action_type", "notify_only")
         logger.info(f"提醒触发: {name} (动作: {action})")
 
-        # 切换到欢呼动画
         renderer.trigger_cheer()
 
-        # 执行动作
         handler = ACTION_HANDLERS.get(action)
         if handler:
             try:
@@ -168,12 +163,11 @@ def main():
     # ========================================================
     clock = pygame.time.Clock()
     running = True
-    bg_color = (0, 0, 0)  # 黑色背景（将作为透明色键）
 
     logger.info("进入主循环")
 
     while running:
-        dt = clock.tick(60) / 1000.0  # 60 FPS, delta time in seconds
+        dt = clock.tick(FPS) / 1000.0
 
         # ---- 事件处理 ----
         for event in pygame.event.get():
@@ -183,34 +177,19 @@ def main():
             elif event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_ESCAPE:
                     running = False
-                elif event.key == pygame.K_c:
-                    # 手动触发欢呼测试
-                    renderer.trigger_cheer()
 
             elif event.type == pygame.MOUSEBUTTONDOWN:
-                if event.button == 1:  # 左键
-                    renderer.handle_mouse_down(event.pos)
-                elif event.button == 3:  # 右键
+                if event.button == 3:  # 右键退出
                     running = False
 
-            elif event.type == pygame.MOUSEBUTTONUP:
-                if event.button == 1:
-                    renderer.handle_mouse_up()
-
-            elif event.type == pygame.MOUSEMOTION:
-                renderer.handle_mouse_move(event.pos)
-
-        # ---- 提醒回调处理（从引擎线程传来）----
+        # ---- 提醒回调处理 ----
         if engine_callback:
-            reminder = engine_callback
             engine_callback = None
-            # 已经在回调中处理了
 
-        # ---- 更新 ----
+        # ---- 更新 & 绘制 ----
         renderer.update(dt)
 
-        # ---- 绘制 ----
-        screen.fill(bg_color)  # 填充黑色（透明色键）
+        screen.fill(BG_COLOR)
         renderer.draw()
 
         pygame.display.flip()

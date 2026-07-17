@@ -5,6 +5,7 @@ Desktop Pet - 桌面电子宠物 MVP
 import sys
 import os
 import logging
+import weakref
 from pathlib import Path
 
 from PyQt5.QtWidgets import QApplication, QSystemTrayIcon, QMenu, QAction, QLabel, QWidget, QVBoxLayout
@@ -193,8 +194,9 @@ class PetWindow(QWidget):
         # 2. 弹出系统通知
         self.tray_icon.showMessage(name, message, QSystemTrayIcon.Information, 5000)
 
-        # 3. 10秒后恢复空闲动画
-        QTimer.singleShot(10000, lambda: self.animation_player.play("idle", fps=8, loop=True))
+        # 3. 10秒后恢复空闲动画（使用 weakref 避免程序快速退出时悬空引用）
+        weak_self = weakref.ref(self)
+        QTimer.singleShot(10000, lambda ws=weak_self: ws() and ws().animation_player.play("idle", fps=8, loop=True))
 
     # --- 鼠标拖拽 ---
     def mousePressEvent(self, event):

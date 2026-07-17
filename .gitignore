@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Build output
+dist/
+build/
+*.exe
+*.spec
+
+# Assets - generated
+assets/animations/idle/*.png
+assets/animations/walk/*.png
+assets/animations/cheer/*.png
+assets/preview_*.png
+
+# Source images (keep originals in separate location)
+assets/source_*.png
+
+# Logs
+logs/
+*.log
+
+# Config (user-specific)
+config.yaml
+
+# Test artifacts
+test_output.txt
+test_error.txt

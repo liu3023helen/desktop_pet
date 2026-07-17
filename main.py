@@ -107,9 +107,9 @@ class PetWindow(QWidget):
         )
         self.setAttribute(Qt.WA_TranslucentBackground)
 
-        # 初始位置（屏幕右下角附近）
+        # 初始位置（屏幕正中间）
         screen = QApplication.primaryScreen().geometry()
-        self.move(screen.width() - 300, screen.height() - 300)
+        self.move(screen.width() // 2 - self.width() // 2, screen.height() // 2 - self.height() // 2)
 
         # 布局
         layout = QVBoxLayout(self)

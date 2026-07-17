@@ -296,7 +296,7 @@ def main():
     # 3. 创建提醒引擎
     from reminder_engine import ReminderEngine
     
-    engine = ReminderEngine(config=config, pet_window=pet_window)
+    engine = ReminderEngine(config=config)
     
     # 注册动作处理器
     engine.register_handler("open_url", open_dingtalk_checkin)

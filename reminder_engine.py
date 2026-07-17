@@ -23,10 +23,9 @@ class ReminderEngine(QThread):
     # 信号：提醒触发
     reminder_triggered = pyqtSignal(dict)  # 提醒配置字典
 
-    def __init__(self, config: Dict[str, Any], pet_window=None, action_handlers: Optional[Dict[str, Callable]] = None):
+    def __init__(self, config: Dict[str, Any], action_handlers: Optional[Dict[str, Callable]] = None):
         super().__init__()
         self.config = config
-        self.pet_window = pet_window
         self._running = False
 
         # 注册的提醒列表

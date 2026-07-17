@@ -1,270 +1,227 @@
 """
-Desktop Pet - 桌面电子宠物 MVP
-主入口：初始化应用、加载配置、启动提醒引擎和宠物窗口
+桌面宠物 - Pygame 版本
+透明背景悬浮窗口，序列帧动画，可拖拽，可扩展提醒系统
 """
-import sys
 import os
+import sys
 import logging
+import webbrowser
+import subprocess
 from pathlib import Path
+from typing import Any, Dict
 
-from PyQt5.QtWidgets import QApplication, QSystemTrayIcon, QMenu, QAction, QLabel, QWidget, QVBoxLayout
-from PyQt5.QtCore import Qt, QPoint, QTimer, pyqtSignal
-from PyQt5.QtGui import QPixmap, QIcon
+import pygame
+
+# 添加项目根目录到路径
+BASE_DIR = Path(__file__).parent
+sys.path.insert(0, str(BASE_DIR))
 
 from config_manager import ConfigManager
-from animation_player import AnimationPlayer
-from dingtalk_handler import open_dingtalk_checkin
+from reminder_engine import ReminderEngine
+from pet_renderer import PetRenderer
+
+# ============================================================
+# 日志配置
+# ============================================================
+LOG_DIR = Path(os.environ.get("APPDATA", "")) / "DesktopPet" / "logs"
+LOG_DIR.mkdir(parents=True, exist_ok=True)
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    handlers=[
+        logging.FileHandler(LOG_DIR / "pet.log", encoding="utf-8"),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger("DesktopPet")
 
 
-# --- 日志配置 ---
-def setup_logging():
-    """配置日志"""
-    log_dir = Path(os.environ.get("APPDATA", "")) / "DesktopPet" / "logs"
-    log_dir.mkdir(parents=True, exist_ok=True)
-    
-    log_file = log_dir / "pet.log"
-    
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-        handlers=[
-            logging.FileHandler(log_file, encoding="utf-8"),
-            logging.StreamHandler()
-        ]
-    )
-    return logging.getLogger("DesktopPet")
+# ============================================================
+# 钉钉打卡处理器
+# ============================================================
+DEFAULT_DINGTALK_URL = "https://im.dingtalk.com/attendancemobile/index.html"
+DEFAULT_DINGTALK_PROTOCOL = "dingtalk://dingtalkclient/page/link?pc_slide=false&url=" + DEFAULT_DINGTALK_URL
 
 
-logger = setup_logging()
+def open_dingtalk(reminder_config: Dict[str, Any]) -> bool:
+    """打开钉钉打卡页面"""
+    target_url = reminder_config.get("action_target", DEFAULT_DINGTALK_PROTOCOL)
 
-
-class PetWindow(QWidget):
-    """透明宠物窗口"""
-
-    def __init__(self, config: dict = None):
-        super().__init__()
-        self.config = config or {}
-        logger.info("初始化宠物窗口")
-
-        # 窗口属性
-        self.setWindowTitle(self.config.get("name", "Pet"))
-        self.setFixedSize(128, 128)
-
-        # 无边框 + 透明 + 置顶 + 工具窗口（不在任务栏显示）
-        self.setWindowFlags(
-            Qt.FramelessWindowHint |
-            Qt.WindowStaysOnTopHint |
-            Qt.Tool
+    # 方案1: 尝试协议启动客户端
+    try:
+        logger.info(f"尝试启动钉钉客户端: {target_url}")
+        subprocess.Popen(
+            ["start", "", target_url],
+            shell=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE
         )
-        self.setAttribute(Qt.WA_TranslucentBackground)
+        logger.info("钉钉客户端启动成功")
+        return True
+    except Exception as e:
+        logger.error(f"启动钉钉客户端异常: {e}")
 
-        # 初始位置（屏幕右下角附近）
-        screen = QApplication.primaryScreen().geometry()
-        self.move(screen.width() - 200, screen.height() - 200)
-
-        # 布局
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-
-        # 动画标签
-        self.animation_label = QLabel(self)
-        self.animation_label.setAlignment(Qt.AlignCenter)
-        layout.addWidget(self.animation_label)
-
-        # 动画播放器
-        self.animation_player = AnimationPlayer()
-        self.animation_player.bind(self.animation_label)
-
-        # 预加载所有动画
-        for anim_name in ["idle", "walk", "cheer"]:
-            self.animation_player.load_animation(anim_name, fps=8)
-
-        # 默认播放 idle
-        self.animation_player.play("idle", fps=8, loop=True)
-
-        # 运动状态
-        self._drag_pos = None
-        self._velocity = QPoint(2, 0)
-
-        # 闲逛定时器
-        self.wander_timer = QTimer(self)
-        self.wander_timer.timeout.connect(self._wander_step)
-        self.wander_timer.start(33)  # ~30fps
-
-        # 系统托盘
-        self._setup_tray()
-
-        logger.info("宠物窗口初始化完成")
-
-    def _setup_tray(self):
-        """设置系统托盘菜单"""
-        self.tray_icon = QSystemTrayIcon(self)
-        # 使用自定义图标或默认图标
-        icon_path = Path(__file__).parent / "assets" / "icon.png"
-        if icon_path.exists():
-            self.tray_icon.setIcon(QIcon(str(icon_path)))
-        else:
-            # 创建一个简单的彩色图标作为占位
-            pixmap = QPixmap(32, 32)
-            pixmap.fill(Qt.GlobalColor.red)
-            self.tray_icon.setIcon(QIcon(pixmap))
-
-        tray_menu = QMenu()
-
-        show_action = QAction("显示", self)
-        show_action.triggered.connect(self.show)
-        tray_menu.addAction(show_action)
-
-        hide_action = QAction("隐藏到托盘", self)
-        hide_action.triggered.connect(self.hide)
-        tray_menu.addAction(hide_action)
-
-        quit_action = QAction("退出", self)
-        quit_action.triggered.connect(self._quit_app)
-        tray_menu.addAction(quit_action)
-
-        self.tray_icon.setContextMenu(tray_menu)
-        self.tray_icon.activated.connect(self._tray_activated)
-        self.tray_icon.show()
-
-    def _tray_activated(self, reason):
-        if reason == QSystemTrayIcon.DoubleClick:
-            self.show()
-            self.activateWindow()
-
-    def _quit_app(self):
-        logger.info("用户退出程序")
-        self.animation_player.stop()
-        self.wander_timer.stop()
-        self.tray_icon.hide()
-        QApplication.quit()
-
-    def _wander_step(self):
-        """闲逛步进逻辑"""
-        screen = QApplication.primaryScreen().geometry()
-        new_x = self.x() + self._velocity.x()
-        new_y = self.y() + self._velocity.y()
-
-        # 边界检测 - 碰到左右边界反向
-        if new_x <= 0 or new_x + self.width() >= screen.width():
-            self._velocity.setX(-self._velocity.x())
-            new_x = max(0, min(new_x, screen.width() - self.width()))
-
-        # 限制Y轴范围
-        if new_y < 0:
-            new_y = 0
-            self._velocity.setY(abs(self._velocity.y()))
-        elif new_y + self.height() > screen.height() - 50:
-            new_y = screen.height() - 50 - self.height()
-            self._velocity.setY(-abs(self._velocity.y()))
-
-        self.move(new_x, new_y)
-
-    def trigger_reminder(self, reminder: dict) -> None:
-        """
-        触发提醒回调（由提醒引擎信号连接到主线程调用）
-        
-        Args:
-            reminder: 提醒配置字典
-        """
-        name = reminder.get("name", "提醒")
-        message = reminder.get("message", f"{name}时间到了！")
-        animation = reminder.get("animation", "cheer")
-        sound_enabled = reminder.get("sound", True)
-
-        logger.info(f"触发提醒: {name}, 消息: {message}")
-
-        # 1. 切换动画
-        if animation in self.animation_player._frames_cache or self.animation_player.load_animation(animation):
-            self.animation_player.play(animation, fps=8, loop=True)
-        else:
-            # 如果没有对应动画，用cheer代替
-            self.animation_player.play("cheer", fps=8, loop=True)
-
-        # 2. 弹出系统通知
-        self.tray_icon.showMessage(name, message, QSystemTrayIcon.Information, 5000)
-
-        # 3. 10秒后恢复空闲动画
-        QTimer.singleShot(10000, lambda: self.animation_player.play("idle", fps=8, loop=True))
-
-    # --- 鼠标拖拽 ---
-    def mousePressEvent(self, event):
-        if event.button() == Qt.LeftButton:
-            self._drag_pos = event.globalPos() - self.frameGeometry().topLeft()
-            event.accept()
-
-    def mouseMoveEvent(self, event):
-        if event.buttons() == Qt.LeftButton and self._drag_pos is not None:
-            self.move(event.globalPos() - self._drag_pos)
-            event.accept()
-
-    def mouseReleaseEvent(self, event):
-        self._drag_pos = None
-
-    # --- 右键菜单 ---
-    def contextMenuEvent(self, event):
-        menu = QMenu(self)
-        menu.addAction("隐藏", self.hide)
-        menu.addAction("退出", self._quit_app)
-        menu.exec_(event.globalPos())
+    # 方案2: 浏览器打开网页版
+    return open_browser(reminder_config)
 
 
-def ensure_config(config_mgr: ConfigManager) -> None:
-    """确保配置文件存在，不存在则释放默认配置"""
-    if not config_mgr.config_path.exists():
-        config_mgr.config_path.parent.mkdir(parents=True, exist_ok=True)
-        default_config = Path(__file__).parent / "config.yaml"
-        if default_config.exists():
-            import shutil
-            shutil.copy2(default_config, config_mgr.config_path)
-            logger.info(f"已释放默认配置到: {config_mgr.config_path}")
+def open_browser(reminder_config: Dict[str, Any]) -> bool:
+    """浏览器打开钉钉网页版"""
+    try:
+        web_url = reminder_config.get("action_target", DEFAULT_DINGTALK_URL)
+        if not web_url.startswith("http"):
+            web_url = DEFAULT_DINGTALK_URL
+        logger.info(f"降级打开浏览器: {web_url}")
+        webbrowser.open(web_url)
+        return True
+    except Exception as e:
+        logger.error(f"浏览器打开失败: {e}")
+        return False
 
 
+# ============================================================
+# 动作处理器注册表
+# ============================================================
+ACTION_HANDLERS = {
+    "open_url": lambda cfg: open_dingtalk(cfg),
+    "dingtalk": lambda cfg: open_dingtalk(cfg),
+}
+
+
+# ============================================================
+# 主程序
+# ============================================================
 def main():
     logger.info("=" * 40)
-    logger.info("Desktop Pet 启动")
+    logger.info("Desktop Pet 启动 (Pygame)")
 
-    app = QApplication(sys.argv)
-    app.setQuitOnLastWindowClosed(False)
-
-    # 启用高分屏DPI缩放
-    app.setAttribute(Qt.AA_EnableHighDpiScaling)
-    app.setAttribute(Qt.AA_UseHighDpiPixmaps)
-
-    # 1. 初始化配置管理器
+    # 加载配置
     config_mgr = ConfigManager()
-    ensure_config(config_mgr)
     config = config_mgr.load()
-    logger.info(f"配置加载完成: pet={config.get('pet', {}).get('name', 'unknown')}")
+    logger.info(f"配置加载完成: pet={config.get('pet', {}).get('name', 'Unknown')}")
 
-    # 2. 创建宠物窗口
-    pet_window = PetWindow(config=config.get("pet", {}))
+    # ========================================================
+    # Pygame 初始化
+    # ========================================================
+    pygame.init()
+    pygame.display.set_caption("Desktop Pet - 小新")
 
-    # 3. 创建提醒引擎
-    from reminder_engine import ReminderEngine
-    
-    engine = ReminderEngine(config=config, pet_window=pet_window)
-    
-    # 注册动作处理器
-    engine.register_handler("open_url", open_dingtalk_checkin)
-    
-    # 连接信号到主线程的提醒处理
-    engine.reminder_triggered.connect(pet_window.trigger_reminder)
-    
+    # 获取屏幕尺寸
+    info = pygame.display.Info()
+    screen_w, screen_h = info.current_w, info.current_h
+
+    # 创建全屏透明窗口
+    # 使用 HWSURFACE + DOUBLEBUF + NOFRAME 实现无边框全屏
+    screen = pygame.display.set_mode(
+        (screen_w, screen_h),
+        pygame.NOFRAME | pygame.HWSURFACE | pygame.DOUBLEBUF
+    )
+
+    # 设置窗口透明度（Windows）
+    # 注意：pygame本身不支持真正的透明背景窗口
+    # 这里用黑色作为色键（chroma key）模拟透明
+    screen.fill((0, 0, 0))
+    pygame.display.flip()
+
+    # 设置色键 - 黑色视为透明
+    # 实际透明效果需要操作系统支持
+    # 在Windows上可以通过 win32gui 设置分层窗口
+
+    logger.info(f"屏幕分辨率: {screen_w}x{screen_h}")
+
+    # ========================================================
+    # 创建渲染器
+    # ========================================================
+    assets_dir = BASE_DIR / "assets"
+    renderer = PetRenderer(screen, assets_dir)
+
+    # ========================================================
+    # 启动提醒引擎
+    # ========================================================
+    engine_callback = None
+
+    def on_reminder(reminder: Dict[str, Any]) -> None:
+        """提醒触发回调 - 在主线程中执行"""
+        nonlocal engine_callback
+        engine_callback = reminder
+        name = reminder.get("name", "提醒")
+        action = reminder.get("action_type", "notify_only")
+        logger.info(f"提醒触发: {name} (动作: {action})")
+
+        # 切换到欢呼动画
+        renderer.trigger_cheer()
+
+        # 执行动作
+        handler = ACTION_HANDLERS.get(action)
+        if handler:
+            try:
+                handler(reminder)
+            except Exception as e:
+                logger.error(f"动作执行失败: {e}")
+
+    engine = ReminderEngine(config, callback=on_reminder)
     engine.start()
-    logger.info("提醒引擎已启动")
 
-    # 4. 显示宠物窗口
-    pet_window.show()
-    logger.info("宠物窗口已显示")
+    # ========================================================
+    # 主循环
+    # ========================================================
+    clock = pygame.time.Clock()
+    running = True
+    bg_color = (0, 0, 0)  # 黑色背景（将作为透明色键）
 
-    exit_code = app.exec_()
-    
+    logger.info("进入主循环")
+
+    while running:
+        dt = clock.tick(60) / 1000.0  # 60 FPS, delta time in seconds
+
+        # ---- 事件处理 ----
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                running = False
+
+            elif event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_ESCAPE:
+                    running = False
+                elif event.key == pygame.K_c:
+                    # 手动触发欢呼测试
+                    renderer.trigger_cheer()
+
+            elif event.type == pygame.MOUSEBUTTONDOWN:
+                if event.button == 1:  # 左键
+                    renderer.handle_mouse_down(event.pos)
+                elif event.button == 3:  # 右键
+                    running = False
+
+            elif event.type == pygame.MOUSEBUTTONUP:
+                if event.button == 1:
+                    renderer.handle_mouse_up()
+
+            elif event.type == pygame.MOUSEMOTION:
+                renderer.handle_mouse_move(event.pos)
+
+        # ---- 提醒回调处理（从引擎线程传来）----
+        if engine_callback:
+            reminder = engine_callback
+            engine_callback = None
+            # 已经在回调中处理了
+
+        # ---- 更新 ----
+        renderer.update(dt)
+
+        # ---- 绘制 ----
+        screen.fill(bg_color)  # 填充黑色（透明色键）
+        renderer.draw()
+
+        pygame.display.flip()
+
+    # ========================================================
     # 清理
+    # ========================================================
+    logger.info("正在退出...")
     engine.stop()
-    logger.info("程序退出")
-    
-    sys.exit(exit_code)
+    pygame.quit()
+    logger.info("已退出")
 
 
 if __name__ == "__main__":

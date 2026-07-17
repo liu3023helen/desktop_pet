@@ -88,12 +88,12 @@ def _check_assets(pet_window) -> None:
 
 
 class PetWindow(QWidget):
-    """透明宠物窗口"""
+    """透明宠物窗口 - 支持安静模式"""
 
     def __init__(self, config: dict = None):
         super().__init__()
         self.config = config or {}
-        logger.info("初始化宠物窗口")
+        logger.info("初始化宠物窗口（安静模式）")
 
         # 窗口属性（与素材图片尺寸一致，256x256）
         self.setWindowTitle(self.config.get("name", "Pet"))
@@ -107,9 +107,12 @@ class PetWindow(QWidget):
         )
         self.setAttribute(Qt.WA_TranslucentBackground)
 
-        # 初始位置（屏幕正中间）
-        screen = QApplication.primaryScreen().geometry()
-        self.move(screen.width() // 2 - self.width() // 2, screen.height() // 2 - self.height() // 2)
+        # 安静模式：默认停在屏幕右下角，不闲逛
+        self._quiet_mode = True
+        self._original_velocity = QPoint(2, 0)  # 活跃模式的速度
+
+        # 初始位置：屏幕右下角（安静模式）
+        self._move_to_corner()
 
         # 布局
         layout = QVBoxLayout(self)
@@ -128,22 +131,60 @@ class PetWindow(QWidget):
         # 预加载 cheer 动画（2帧，低帧率让每帧停留更久）
         self.animation_player.load_animation("cheer", fps=3)
 
-        # 默认播放 cheer
-        self.animation_player.play("cheer", fps=3, loop=True)
+        # 安静模式：只显示静态图片，不播放动画
+        self._show_static_frame()
 
         # 运动状态
         self._drag_pos = None
-        self._velocity = QPoint(2, 0)
+        self._velocity = QPoint(0, 0)  # 安静模式速度为0
 
-        # 闲逛定时器
+        # 闲逛定时器（安静模式下不启动）
         self.wander_timer = QTimer(self)
         self.wander_timer.timeout.connect(self._wander_step)
-        self.wander_timer.start(33)  # ~30fps
+        # 安静模式：不启动闲逛
 
         # 系统托盘
         self._setup_tray()
 
-        logger.info("宠物窗口初始化完成")
+        logger.info("宠物窗口初始化完成（安静模式，右下角静止）")
+
+    def _move_to_corner(self):
+        """移动到屏幕右下角（安静模式位置）"""
+        screen = QApplication.primaryScreen().geometry()
+        x = screen.width() - self.width() - 20   # 距右边20px
+        y = screen.height() - self.height() - 60  # 距底部60px（避开任务栏）
+        self.move(x, y)
+        logger.debug(f"宠物移至右下角: ({x}, {y})")
+
+    def _show_static_frame(self):
+        """显示静态图片（cheer第一帧），不播放动画"""
+        if "cheer" not in self.animation_player._frames_cache:
+            self.animation_player.load_animation("cheer", fps=3)
+        if self.animation_player._frames_cache.get("cheer"):
+            # 只显示第一帧，不启动定时器
+            pixmap = self.animation_player._frames_cache["cheer"][0]
+            self.animation_label.setPixmap(pixmap)
+        logger.debug("显示静态图片")
+
+    def _enter_quiet_mode(self):
+        """进入安静模式：停止闲逛，停止动画，显示静态图片，回到右下角"""
+        if not self._quiet_mode:
+            self._quiet_mode = True
+            self._velocity = QPoint(0, 0)
+            self.wander_timer.stop()
+            # 停止动画，显示第一帧作为静态图片
+            self.animation_player.stop()
+            self._show_static_frame()
+            self._move_to_corner()
+            logger.info("宠物进入安静模式（静止图片）")
+
+    def _enter_active_mode(self):
+        """进入活跃模式：开始闲逛"""
+        if self._quiet_mode:
+            self._quiet_mode = False
+            self._velocity = self._original_velocity
+            self.wander_timer.start(33)  # ~30fps
+            logger.info("宠物进入活跃模式")
 
     def _setup_tray(self):
         """设置系统托盘菜单"""
@@ -168,6 +209,15 @@ class PetWindow(QWidget):
         hide_action.triggered.connect(self.hide)
         tray_menu.addAction(hide_action)
 
+        tray_menu.addSeparator()
+
+        # 安静模式切换
+        self._quiet_action = QAction("安静模式 ✓", self, checkable=True, checked=True)
+        self._quiet_action.triggered.connect(self._toggle_quiet_mode)
+        tray_menu.addAction(self._quiet_action)
+
+        tray_menu.addSeparator()
+
         quit_action = QAction("退出", self)
         quit_action.triggered.connect(self._quit_app)
         tray_menu.addAction(quit_action)
@@ -180,6 +230,15 @@ class PetWindow(QWidget):
         if reason == QSystemTrayIcon.DoubleClick:
             self.show()
             self.activateWindow()
+
+    def _toggle_quiet_mode(self, checked):
+        """切换安静模式"""
+        self._quiet_mode = checked
+        self._quiet_action.setChecked(checked)
+        if checked:
+            self._enter_quiet_mode()
+        else:
+            self._enter_active_mode()
 
     def _quit_app(self):
         logger.info("用户退出程序")
@@ -212,9 +271,8 @@ class PetWindow(QWidget):
     def trigger_reminder(self, reminder: dict) -> None:
         """
         触发提醒回调（由提醒引擎信号连接到主线程调用）
-        
-        Args:
-            reminder: 提醒配置字典
+        提醒时：跳到屏幕中央 + 进入活跃模式 + 播放动画 + 弹窗
+        10秒后：恢复右下角安静模式
         """
         name = reminder.get("name", "提醒")
         message = reminder.get("message", f"{name}时间到了！")
@@ -223,19 +281,27 @@ class PetWindow(QWidget):
 
         logger.info(f"触发提醒: {name}, 消息: {message}")
 
-        # 1. 切换动画
+        # 1. 进入活跃模式（开始闲逛）
+        self._enter_active_mode()
+
+        # 2. 移动到屏幕正中央
+        screen = QApplication.primaryScreen().geometry()
+        center_x = screen.width() // 2 - self.width() // 2
+        center_y = screen.height() // 2 - self.height() // 2
+        self.move(center_x, center_y)
+
+        # 3. 切换动画
         if animation in self.animation_player._frames_cache or self.animation_player.load_animation(animation):
             self.animation_player.play(animation, fps=3, loop=True)
         else:
-            # 如果没有对应动画，用cheer代替
             self.animation_player.play("cheer", fps=3, loop=True)
 
-        # 2. 弹出系统通知
+        # 4. 弹出系统通知
         self.tray_icon.showMessage(name, message, QSystemTrayIcon.Information, 5000)
 
-        # 3. 10秒后恢复默认动画（使用 weakref 避免程序快速退出时悬空引用）
+        # 5. 10秒后恢复安静模式（回到右下角，显示静态图片）
         weak_self = weakref.ref(self)
-        QTimer.singleShot(10000, lambda ws=weak_self: ws() and ws().animation_player.play("cheer", fps=3, loop=True))
+        QTimer.singleShot(10000, lambda ws=weak_self: ws() and ws()._enter_quiet_mode())
 
     # --- 鼠标拖拽 ---
     def mousePressEvent(self, event):
@@ -255,6 +321,14 @@ class PetWindow(QWidget):
     def contextMenuEvent(self, event):
         menu = QMenu(self)
         menu.addAction("隐藏", self.hide)
+        
+        quiet_action = menu.addAction(
+            "安静模式 ✓" if self._quiet_mode else "活跃模式"
+        )
+        quiet_action.setCheckable(True)
+        quiet_action.setChecked(self._quiet_mode)
+        quiet_action.triggered.connect(self._toggle_quiet_mode)
+        
         menu.addAction("退出", self._quit_app)
         menu.exec_(event.globalPos())
 

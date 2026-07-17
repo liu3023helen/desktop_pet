@@ -51,6 +51,41 @@ logger = setup_logging()
 # 宠物闲逛时底部预留像素（为任务栏留出空间，避免被遮挡）
 TASKBAR_RESERVE_PX = 50
 
+# 必需的动画资源目录
+REQUIRED_ANIMATIONS = ("idle", "walk", "cheer")
+
+
+def _check_assets(pet_window) -> None:
+    """启动时检查素材完整性，缺失时弹出警告"""
+    assets_dir = Path(__file__).parent / "assets" / "animations"
+    missing = []
+    empty = []
+    for anim_name in REQUIRED_ANIMATIONS:
+        anim_dir = assets_dir / anim_name
+        if not anim_dir.exists():
+            missing.append(anim_name)
+        elif not any(anim_dir.glob("*.png")):
+            empty.append(anim_name)
+
+    issues = []
+    if missing:
+        issues.append(f"缺失目录: {', '.join(missing)}")
+    if empty:
+        issues.append(f"目录为空: {', '.join(empty)}")
+
+    if issues:
+        msg = (
+            f"素材不完整，宠物可能无法正常显示。\n\n"
+            f"{''.join(issues)}\n\n"
+            f"请运行 'python generate_assets.py' 生成占位素材。"
+        )
+        logger.warning(msg)
+        # 使用 QTimer 延迟弹窗，避免在构造期间阻塞
+        from PyQt5.QtWidgets import QMessageBox
+        QTimer.singleShot(500, lambda: QMessageBox.warning(
+            pet_window, "素材缺失", msg, QMessageBox.Ok
+        ))
+
 
 class PetWindow(QWidget):
     """透明宠物窗口"""
@@ -254,6 +289,9 @@ def main():
 
     # 2. 创建宠物窗口
     pet_window = PetWindow(config=config.get("pet", {}))
+
+    # 2b. 检查素材完整性
+    _check_assets(pet_window)
 
     # 3. 创建提醒引擎
     from reminder_engine import ReminderEngine

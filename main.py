@@ -48,6 +48,10 @@ def setup_logging():
 logger = setup_logging()
 
 
+# 宠物闲逛时底部预留像素（为任务栏留出空间，避免被遮挡）
+TASKBAR_RESERVE_PX = 50
+
+
 class PetWindow(QWidget):
     """透明宠物窗口"""
 
@@ -160,12 +164,12 @@ class PetWindow(QWidget):
             self._velocity.setX(-self._velocity.x())
             new_x = max(0, min(new_x, screen.width() - self.width()))
 
-        # 限制Y轴范围
+        # 限制Y轴范围（底部预留任务栏空间）
         if new_y < 0:
             new_y = 0
             self._velocity.setY(abs(self._velocity.y()))
-        elif new_y + self.height() > screen.height() - 50:
-            new_y = screen.height() - 50 - self.height()
+        elif new_y + self.height() > screen.height() - TASKBAR_RESERVE_PX:
+            new_y = screen.height() - TASKBAR_RESERVE_PX - self.height()
             self._velocity.setY(-abs(self._velocity.y()))
 
         self.move(new_x, new_y)

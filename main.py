@@ -332,11 +332,11 @@ class PetWindow(QWidget):
 
     def _show_static_frame(self):
         """显示静态图片（cheer第一帧），不播放动画"""
-        if "cheer" not in self.animation_player._frames_cache:
+        if not self.animation_player.is_animation_loaded("cheer"):
             self.animation_player.load_animation("cheer", fps=3)
-        if self.animation_player._frames_cache.get("cheer"):
+        pixmap = self.animation_player.get_frame("cheer", 0)
+        if pixmap:
             # 只显示第一帧，不启动定时器
-            pixmap = self.animation_player._frames_cache["cheer"][0]
             self.animation_label.setPixmap(pixmap)
         logger.debug("显示静态图片")
 
@@ -620,7 +620,7 @@ class PetWindow(QWidget):
         self.move(center_x, center_y)
 
         # 3. 切换动画
-        if animation in self.animation_player._frames_cache or self.animation_player.load_animation(animation):
+        if self.animation_player.is_animation_loaded(animation) or self.animation_player.load_animation(animation):
             self.animation_player.play(animation, fps=3, loop=True)
         else:
             self.animation_player.play("cheer", fps=3, loop=True)

@@ -88,6 +88,25 @@ class AnimationPlayer:
 
         return False
 
+    def is_animation_loaded(self, name: str) -> bool:
+        """检查指定动画是否已加载到缓存"""
+        return name in self._frames_cache
+
+    def get_frame(self, name: str, index: int = 0):
+        """获取指定动画的某一帧 QPixmap
+        
+        Args:
+            name: 动画名称
+            index: 帧索引，默认 0（第一帧）
+            
+        Returns:
+            QPixmap 或 None（动画未加载或索引越界时）
+        """
+        frames = self._frames_cache.get(name)
+        if frames and 0 <= index < len(frames):
+            return frames[index]
+        return None
+
     def play(self, name: str, fps: int = 8, loop: bool = True) -> bool:
         """
         播放指定动画

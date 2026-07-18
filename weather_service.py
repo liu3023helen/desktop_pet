@@ -4,14 +4,102 @@
 """
 import json
 import logging
+import socket
+import struct
 import urllib.request
 import urllib.error
 import urllib.parse
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Dict, List, Optional
+from urllib.parse import urlparse
 
 logger = logging.getLogger("DesktopPet")
+
+# SSRF 防护：允许的域名白名单
+_ALLOWED_HOSTS = frozenset([
+    "geocoding-api.open-meteo.com",
+    "api.open-meteo.com",
+    "geoapi.qweather.com",
+    "devapi.qweather.com",
+    "api.openweathermap.org",
+])
+
+
+def _is_private_ip(host: str) -> bool:
+    """检查主机是否为内网/私有 IP 地址（SSRF 防护）"""
+    # 解析所有地址记录
+    try:
+        addresses = socket.getaddrinfo(host, None, socket.AF_INET)
+    except socket.gaierror:
+        return False  # 无法解析的域名视为不安全
+
+    for addr_info in addresses:
+        ip_bytes = addr_info[4][0]
+        ip_int = struct.unpack("!I", socket.inet_aton(ip_bytes))[0]
+
+        # 10.0.0.0/8
+        if (ip_int >> 24) == 10:
+            return True
+        # 172.16.0.0/12
+        if (ip_int >> 20) == 0xAC and (ip_int >> 16 & 0x0F) >= 16 and (ip_int >> 16 & 0x0F) <= 31:
+            return True
+        # 192.168.0.0/16
+        if (ip_int >> 24) == 192 and (ip_int >> 16 & 0xFF) == 168:
+            return True
+        # 127.0.0.0/8 (loopback)
+        if (ip_int >> 24) == 127:
+            return True
+        # 0.0.0.0/8
+        if (ip_int >> 24) == 0:
+            return True
+        # 100.64.0.0/10 (Shared Address Space / CGNAT)
+        if (ip_int >> 24) == 100 and (ip_int >> 16 & 0xC0) == 64:
+            return True
+        # 192.0.0.0/24 (IETF Protocol Assignments)
+        if (ip_int >> 24) == 192 and (ip_int >> 16 & 0xFF) == 0:
+            return True
+        # 198.51.100.0/24 (TEST-NET-2)
+        if (ip_int >> 24) == 198 and (ip_int >> 16 & 0xFF) == 51 and (ip_int >> 8 & 0xFF) == 100:
+            return True
+        # 203.0.113.0/24 (TEST-NET-3)
+        if (ip_int >> 24) == 203 and (ip_int >> 16 & 0xFF) == 0 and (ip_int >> 8 & 0xFF) == 113:
+            return True
+        # 198.18.0.0/15 (Benchmarking)
+        if (ip_int >> 23) == 0xCF12:
+            return True
+        # 169.254.0.0/16 (Link-local)
+        if (ip_int >> 24) == 169 and (ip_int >> 16 & 0xFF) == 254:
+            return True
+        # 240.0.0.0/4 (Reserved)
+        if (ip_int >> 28) >= 0xE:
+            return True
+
+    return False
+
+
+def safe_urlopen(url: str, timeout: float = 8.0) -> urllib.response.addinfourl:
+    """
+    SSRF 安全封装的 urlopen。
+    校验 URL 域名在白名单内，且解析后不是内网 IP。
+    """
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        raise ValueError(f"仅允许 HTTP/HTTPS 协议: {url}")
+
+    host = parsed.hostname
+    if not host:
+        raise ValueError(f"URL 缺少主机名: {url}")
+
+    host_lower = host.lower()
+    if host_lower not in _ALLOWED_HOSTS:
+        raise ValueError(f"域名不在白名单中: {host}，允许的域名: {_ALLOWED_HOSTS}")
+
+    if _is_private_ip(host_lower):
+        raise ValueError(f"拒绝访问内网地址: {host}")
+
+    req = urllib.request.Request(url, headers={"User-Agent": "DesktopPet/2.0"})
+    return urllib.request.urlopen(req, timeout=timeout)
 
 
 @dataclass
@@ -89,8 +177,7 @@ class OpenMeteoProvider(WeatherProvider):
         try:
             # 1. 地理编码：城市名 -> 经纬度
             geo_url = f"{self.GEO_URL}?name={urllib.parse.quote(city)}&count=1&language=zh&format=json"
-            req = urllib.request.Request(geo_url, headers={"User-Agent": "DesktopPet/2.0"})
-            with urllib.request.urlopen(req, timeout=8) as resp:
+            with safe_urlopen(geo_url, timeout=8) as resp:
                 geo_data = json.loads(resp.read().decode("utf-8"))
 
             results = geo_data.get("results", [])
@@ -108,8 +195,7 @@ class OpenMeteoProvider(WeatherProvider):
                 f"&current=temperature_2m,relative_humidity_2m,weather_code"
                 f"&timezone=auto"
             )
-            req = urllib.request.Request(weather_url, headers={"User-Agent": "DesktopPet/2.0"})
-            with urllib.request.urlopen(req, timeout=8) as resp:
+            with safe_urlopen(weather_url, timeout=8) as resp:
                 weather_data = json.loads(resp.read().decode("utf-8"))
 
             current = weather_data.get("current", {})
@@ -139,7 +225,7 @@ class QWeatherProvider(WeatherProvider):
 
         try:
             geo_url = f"{self.GEO_URL}?location={city}&key={api_key}&lang=zh"
-            with urllib.request.urlopen(geo_url, timeout=8) as resp:
+            with safe_urlopen(geo_url, timeout=8) as resp:
                 geo_data = json.loads(resp.read().decode("utf-8"))
 
             if geo_data.get("code") != "200":
@@ -155,7 +241,7 @@ class QWeatherProvider(WeatherProvider):
             city_name = locations[0]["name"]
 
             weather_url = f"{self.WEATHER_URL}?location={location_id}&key={api_key}"
-            with urllib.request.urlopen(weather_url, timeout=8) as resp:
+            with safe_urlopen(weather_url, timeout=8) as resp:
                 weather_data = json.loads(resp.read().decode("utf-8"))
 
             if weather_data.get("code") != "200":
@@ -189,7 +275,7 @@ class OpenWeatherProvider(WeatherProvider):
                 f"{self.URL}?q={city}&appid={api_key}"
                 f"&units=metric&lang=zh_cn"
             )
-            with urllib.request.urlopen(url, timeout=8) as resp:
+            with safe_urlopen(url, timeout=8) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
 
             return WeatherInfo(

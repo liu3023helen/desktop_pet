@@ -38,13 +38,13 @@ def get_exe_path() -> str:
 
 
 def is_auto_start_enabled() -> bool:
-    """检查开机自启是否已启用"""
+    """检查开机自启是否已启用（仅检查注册表是否有值，不校验路径）"""
     try:
         key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, REG_PATH, 0, winreg.KEY_READ)
         try:
             value, _ = winreg.QueryValueEx(key, APP_NAME)
             winreg.CloseKey(key)
-            return value == get_exe_path()
+            return bool(value)
         except FileNotFoundError:
             winreg.CloseKey(key)
             return False
@@ -52,11 +52,58 @@ def is_auto_start_enabled() -> bool:
         return False
 
 
+def get_registered_autostart_path() -> Optional[str]:
+    """获取注册表中记录的开机自启路径（用于检测exe是否被移动）"""
+    try:
+        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, REG_PATH, 0, winreg.KEY_READ)
+        try:
+            value, _ = winreg.QueryValueEx(key, APP_NAME)
+            winreg.CloseKey(key)
+            return value
+        except FileNotFoundError:
+            winreg.CloseKey(key)
+            return None
+    except OSError:
+        return None
+
+
+def cleanup_stale_autostart() -> bool:
+    """检测并清理失效的开机自启注册表条目（exe被移动后）"""
+    registered_path = get_registered_autostart_path()
+    if registered_path is None:
+        return True  # 无注册表条目，无需清理
+    
+    current_path = get_exe_path()
+    if registered_path == current_path:
+        return True  # 路径一致，无需清理
+    
+    # 检查注册表中的旧路径是否还有效
+    if os.path.exists(registered_path):
+        return True  # 旧路径仍然有效（可能是多实例），不清理
+    
+    # 旧路径已失效，清理注册表
+    logger.warning(f"检测到失效的开机自启路径: {registered_path}，当前路径: {current_path}")
+    try:
+        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, REG_PATH, 0, winreg.KEY_WRITE)
+        winreg.DeleteValue(key, APP_NAME)
+        winreg.CloseKey(key)
+        logger.info("已清理失效的开机自启注册表条目")
+        return True
+    except OSError as e:
+        logger.error(f"清理失效的开机自启注册表条目失败: {e}")
+        return False
+
+
 def set_auto_start(enabled: bool) -> bool:
-    """设置开机自启"""
+    """设置开机自启。启用时会先清理旧路径再写入新路径"""
     try:
         key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, REG_PATH, 0, winreg.KEY_WRITE)
         if enabled:
+            # 先清理可能存在的旧路径
+            try:
+                winreg.DeleteValue(key, APP_NAME)
+            except FileNotFoundError:
+                pass
             winreg.SetValueEx(key, APP_NAME, 0, winreg.REG_SZ, get_exe_path())
             logger.info(f"开机自启已启用: {get_exe_path()}")
         else:
@@ -626,11 +673,12 @@ class PetWindow(QWidget):
         
         menu.addSeparator()
         
+        auto_start = is_auto_start_enabled()
         autostart_action = menu.addAction(
-            "开机自启" if is_auto_start_enabled() else "开机自启"
+            "禁用开机自启" if auto_start else "启用开机自启"
         )
         autostart_action.setCheckable(True)
-        autostart_action.setChecked(is_auto_start_enabled())
+        autostart_action.setChecked(auto_start)
         autostart_action.triggered.connect(self._toggle_autostart)
         
         menu.addSeparator()
@@ -663,6 +711,9 @@ def main():
 
     # 0. 确保数据目录存在（首次运行创建 data/ 并复制默认配置）
     ensure_data_dir()
+
+    # 0b. 清理失效的开机自启注册表条目（exe被移动后）
+    cleanup_stale_autostart()
 
     # 1. 初始化配置管理器
     config_mgr = ConfigManager()

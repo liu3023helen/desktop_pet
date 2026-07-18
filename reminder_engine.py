@@ -118,7 +118,7 @@ class ReminderEngine(QThread):
             logger.info(f"日期变更: {self._last_check_date} -> {today_key}，重置触发记录")
             with self._lock:
                 self._triggered_today.clear()
-                self._snooze_mgr.reset_daily()
+                self._snooze_mgr.reset_daily(now)
             self._last_check_date = today_key
 
         for reminder in self._reminders:
@@ -138,8 +138,8 @@ class ReminderEngine(QThread):
             with self._lock:
                 skipped = self._snooze_mgr.is_skipped(reminder_name)
                 completed = self._snooze_mgr.is_completed(reminder_name)
-                snoozed = self._snooze_mgr.is_snoozed(reminder_name)
-                should_snooze_trigger = self._snooze_mgr.should_trigger_snooze(reminder_name) if snoozed else False
+                snoozed = self._snooze_mgr.is_snoozed(reminder_name, now=now)
+                should_snooze_trigger = self._snooze_mgr.should_trigger_snooze(reminder_name, now=now) if snoozed else False
 
             if skipped or completed:
                 continue
@@ -195,7 +195,8 @@ class ReminderEngine(QThread):
     def handle_snooze(self, reminder_name: str, minutes: int) -> None:
         """处理贪睡请求（主线程调用）"""
         with self._lock:
-            self._snooze_mgr.snooze(reminder_name, minutes)
+            now = self.get_effective_now()
+            self._snooze_mgr.snooze(reminder_name, minutes, now=now)
             # 标记为已触发，避免原时间点再次触发
             now = self.get_effective_now()
             today_key = _date_key(now)

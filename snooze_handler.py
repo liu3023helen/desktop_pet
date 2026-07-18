@@ -22,25 +22,37 @@ class SnoozeManager:
         # 上次重置日期，用于跨天自动清理
         self._last_reset_date: Optional[str] = None
 
-    def _check_daily_reset(self) -> None:
+    def _check_daily_reset(self, now: Optional[datetime] = None) -> None:
         """检查是否需要跨天重置"""
-        today_key = datetime.now().strftime("%Y-%m-%d")
+        if now is None:
+            now = datetime.now()
+        today_key = now.strftime("%Y-%m-%d")
         if self._last_reset_date is not None and today_key != self._last_reset_date:
             logger.info("日期变更，重置所有临时状态")
-            self.reset_daily()
+            self.reset_daily(now)
         self._last_reset_date = today_key
 
-    def reset_daily(self) -> None:
+    def reset_daily(self, now: Optional[datetime] = None) -> None:
         """跨天重置所有临时状态"""
+        if now is None:
+            now = datetime.now()
         self._snoozed.clear()
         self._skipped_today.clear()
         self._completed.clear()
-        self._last_reset_date = datetime.now().strftime("%Y-%m-%d")
+        self._last_reset_date = now.strftime("%Y-%m-%d")
 
     # --- 贪睡 ---
-    def snooze(self, reminder_name: str, minutes: int = 5) -> None:
-        """将提醒设为贪睡状态，延迟N分钟"""
-        next_time = datetime.now() + timedelta(minutes=minutes)
+    def snooze(self, reminder_name: str, minutes: int = 5, now: Optional[datetime] = None) -> None:
+        """将提醒设为贪睡状态，延迟N分钟
+        
+        Args:
+            reminder_name: 提醒名称
+            minutes: 延迟分钟数
+            now: 当前时间（由引擎传入有效时间，含NTP偏移）
+        """
+        if now is None:
+            now = datetime.now()
+        next_time = now + timedelta(minutes=minutes)
         self._snoozed[reminder_name] = next_time
         # 贪睡时自动清除跳过和完成状态
         self._skipped_today.discard(reminder_name)
@@ -56,22 +68,25 @@ class SnoozeManager:
         """清除提醒的贪睡状态（触发后调用）"""
         self._snoozed.pop(reminder_name, None)
 
-    def is_snoozed(self, reminder_name: str) -> bool:
+    def is_snoozed(self, reminder_name: str, now: Optional[datetime] = None) -> bool:
         """检查提醒是否处于贪睡状态且尚未到触发时间"""
-        self._check_daily_reset()
+        if now is None:
+            now = datetime.now()
+        self._check_daily_reset(now)
         snooze_time = self._snoozed.get(reminder_name)
         if snooze_time is None:
             return False
-        # 还没到贪睡时间
-        return datetime.now() < snooze_time
+        return now < snooze_time
 
-    def should_trigger_snooze(self, reminder_name: str) -> bool:
+    def should_trigger_snooze(self, reminder_name: str, now: Optional[datetime] = None) -> bool:
         """检查贪睡的提醒是否已到触发时间"""
-        self._check_daily_reset()
+        if now is None:
+            now = datetime.now()
+        self._check_daily_reset(now)
         snooze_time = self._snoozed.get(reminder_name)
         if snooze_time is None:
             return False
-        return datetime.now() >= snooze_time
+        return now >= snooze_time
 
     # --- 跳过今天 ---
     def skip_today(self, reminder_name: str) -> None:

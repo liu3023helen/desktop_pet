@@ -228,7 +228,7 @@ class PetWindow(QWidget):
 
         # 安静模式：默认停在屏幕右下角，不闲逛
         self._quiet_mode = True
-        self._original_velocity = QPoint(1, 0)  # 活跃模式的速度（缩小范围）
+        self._original_velocity = QPoint(-1, 0)  # 活跃模式的速度（缩小范围）
         # 活跃模式下的X轴活动范围比例（0~1），0.4表示只在屏幕中间40%宽度内移动
         self._wander_x_range_ratio = 0.4
 
@@ -626,7 +626,7 @@ class PetWindow(QWidget):
         
         menu.addSeparator()
         
-        menu.addAction("退出", self._quit_app)
+        menu.addAction("退出", self._quit_app) 
         menu.exec_(event.globalPos())
 
 

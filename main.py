@@ -257,9 +257,12 @@ class PetWindow(QWidget):
         self.config = config or {}
         logger.info("初始化宠物窗口（安静模式）")
 
-        # 窗口属性（与素材图片尺寸一致，256x256）
+        # 窗口属性（从配置读取，兼容旧版无配置项）
+        ui_cfg = self.config.get("ui", {}) if isinstance(self.config.get("ui"), dict) else {}
+        window_size = ui_cfg.get("window_size", 256)
+        
         self.setWindowTitle(self.config.get("name", "Pet"))
-        self.setFixedSize(256, 256)
+        self.setFixedSize(window_size, window_size)
 
         # 无边框 + 透明 + 置顶 + 工具窗口（不在任务栏显示）
         self.setWindowFlags(
@@ -272,8 +275,8 @@ class PetWindow(QWidget):
         # 安静模式：默认停在屏幕右下角，不闲逛
         self._quiet_mode = True
         self._original_velocity = QPoint(-1, 0)  # 活跃模式的速度（缩小范围）
-        # 活跃模式下的X轴活动范围比例（0~1），0.4表示只在屏幕中间40%宽度内移动
-        self._wander_x_range_ratio = 0.4
+        # 活跃模式下的X轴活动范围比例（0~1）
+        self._wander_x_range_ratio = ui_cfg.get("wander_x_range_ratio", 0.4)
 
         # 初始位置：屏幕右下角（安静模式）
         self._move_to_corner()
@@ -357,8 +360,9 @@ class PetWindow(QWidget):
         if self._quiet_mode:
             self._quiet_mode = False
             self._velocity = self._original_velocity
-            self.wander_timer.start(33)  # ~30fps
-            logger.info("宠物进入活跃模式")
+            wander_speed = self.config.get("ui", {}).get("wander_speed_ms", 33)
+            self.wander_timer.start(wander_speed)
+            logger.info(f"宠物进入活跃模式 (speed={wander_speed}ms)")
 
     def _setup_tray(self):
         """设置系统托盘菜单"""
@@ -560,14 +564,16 @@ class PetWindow(QWidget):
             QMessageBox.warning(self, "功能未就绪", "天气模块尚未集成")
         except Exception as e:
             logger.error(f"天气查询失败: {e}")
-            self.bubble.show_bubble("天气查询失败", duration_ms=4000)
+            weather_dur = self.config.get("ui", {}).get("weather_bubble_duration_ms", 6000)
+            self.bubble.show_bubble("天气查询失败", duration_ms=weather_dur)
 
     @pyqtSlot(str)
     def _show_weather_bubble(self, msg: str):
         """在主线程显示天气气泡"""
         logger.info(f"[Weather] _show_weather_bubble: msg={msg!r}")
         logger.info(f"[Weather] bubble before show: visible={self.bubble.isVisible()}")
-        self.bubble.show_bubble(msg, duration_ms=6000)
+        weather_dur = self.config.get("ui", {}).get("weather_bubble_duration_ms", 6000)
+        self.bubble.show_bubble(msg, duration_ms=weather_dur)
         logger.info(f"[Weather] bubble after show: visible={self.bubble.isVisible()}")
         self.tray_icon.showMessage("天气信息", msg.replace("\n", " "), QSystemTrayIcon.Information, 5000)
 
@@ -631,12 +637,15 @@ class PetWindow(QWidget):
             play_reminder_sound(sound_file if sound_file else None)
 
         # 5. 漫画气泡展示提醒文案（同时保留托盘通知作为辅助）
-        self.bubble.show_bubble(message, duration_ms=8000)
+        ui_cfg = self.config.get("ui", {})
+        bubble_dur = ui_cfg.get("bubble_duration_ms", 8000)
+        self.bubble.show_bubble(message, duration_ms=bubble_dur)
         self.tray_icon.showMessage(name, message, QSystemTrayIcon.Information, 5000)
 
-        # 6. 10秒后恢复安静模式（回到右下角，显示静态图片）
+        # 6. 恢复安静模式（回到右下角，显示静态图片）
+        restore_delay = ui_cfg.get("restore_quiet_delay_ms", 10000)
         weak_self = weakref.ref(self)
-        QTimer.singleShot(10000, lambda ws=weak_self: ws() and ws()._enter_quiet_mode())
+        QTimer.singleShot(restore_delay, lambda ws=weak_self: ws() and ws()._enter_quiet_mode())
 
     # --- 鼠标拖拽 ---
     def mousePressEvent(self, event):

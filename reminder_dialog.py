@@ -14,11 +14,12 @@ from PyQt5.QtGui import QFont
 
 
 def _scan_sound_files() -> list:
-    """扫描 assets/sounds 目录下的 WAV 文件，返回文件名列表"""
+    """扫描 assets/sounds 目录下的 WAV 文件，返回文件名列表（排除默认提示音 reminder.wav）"""
     sounds_dir = os.path.join(os.path.dirname(__file__), "assets", "sounds")
     if not os.path.isdir(sounds_dir):
         return []
-    files = sorted([f for f in os.listdir(sounds_dir) if f.lower().endswith(".wav")])
+    files = sorted([f for f in os.listdir(sounds_dir)
+                    if f.lower().endswith(".wav") and f.lower() != "reminder.wav"])
     return files
 
 

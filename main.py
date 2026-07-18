@@ -176,7 +176,10 @@ REQUIRED_ANIMATIONS = ("cheer",)
 
 def _check_assets(pet_window) -> None:
     """启动时检查素材完整性，缺失时弹出警告"""
-    assets_dir = Path(__file__).parent / "assets" / "animations"
+    if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+        assets_dir = Path(sys._MEIPASS) / "assets" / "animations"
+    else:
+        assets_dir = Path(__file__).parent / "assets" / "animations"
     missing = []
     empty = []
     for anim_name in REQUIRED_ANIMATIONS:

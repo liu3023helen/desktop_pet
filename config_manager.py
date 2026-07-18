@@ -68,6 +68,28 @@ class ConfigManager:
             "reminders": []
         }
 
+    def save(self, config: Dict[str, Any]) -> bool:
+        """保存配置到YAML文件（原子写入，防止并发损坏）"""
+        try:
+            self.config_path.parent.mkdir(parents=True, exist_ok=True)
+            temp_path = self.config_path.with_suffix(".tmp")
+            with open(temp_path, "w", encoding="utf-8") as f:
+                yaml.dump(config, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
+            temp_path.replace(self.config_path)
+            print(f"[Config] 配置已保存: {self.config_path}")
+            return True
+        except Exception as e:
+            print(f"[Config] 保存配置失败: {e}")
+            try:
+                temp_path.unlink(missing_ok=True)
+            except:
+                pass
+            return False
+
+    def reload(self) -> Dict[str, Any]:
+        """重新加载配置文件（外部修改后调用）"""
+        return self.load()
+
     def get_enabled_reminders(self) -> list:
         """获取所有启用的提醒"""
         config = self.load()

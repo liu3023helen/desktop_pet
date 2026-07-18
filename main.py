@@ -1,11 +1,14 @@
 """
 Desktop Pet - 桌面电子宠物 MVP
 主入口：初始化应用、加载配置、启动提醒引擎和宠物窗口
+支持：安静模式/开机自启/音效/多显示器适配
 """
 import sys
 import os
 import logging
 import weakref
+import winreg
+import winsound
 from pathlib import Path
 
 from PyQt5.QtWidgets import QApplication, QSystemTrayIcon, QMenu, QAction, QLabel, QWidget, QVBoxLayout
@@ -15,6 +18,89 @@ from PyQt5.QtGui import QPixmap, QIcon
 from config_manager import ConfigManager
 from animation_player import AnimationPlayer
 from dingtalk_handler import open_dingtalk_checkin
+
+
+# --- 开机自启管理 ---
+APP_NAME = "DesktopPet"
+REG_PATH = r"Software\Microsoft\Windows\CurrentVersion\Run"
+
+
+def get_exe_path() -> str:
+    """获取当前 exe 路径（兼容开发模式和打包模式）"""
+    if getattr(sys, 'frozen', False):
+        return sys.executable
+    else:
+        return os.path.abspath(sys.argv[0])
+
+
+def is_auto_start_enabled() -> bool:
+    """检查开机自启是否已启用"""
+    try:
+        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, REG_PATH, 0, winreg.KEY_READ)
+        try:
+            value, _ = winreg.QueryValueEx(key, APP_NAME)
+            winreg.CloseKey(key)
+            return value == get_exe_path()
+        except FileNotFoundError:
+            winreg.CloseKey(key)
+            return False
+    except OSError:
+        return False
+
+
+def set_auto_start(enabled: bool) -> bool:
+    """设置开机自启"""
+    try:
+        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, REG_PATH, 0, winreg.KEY_WRITE)
+        if enabled:
+            winreg.SetValueEx(key, APP_NAME, 0, winreg.REG_SZ, get_exe_path())
+            logger.info(f"开机自启已启用: {get_exe_path()}")
+        else:
+            try:
+                winreg.DeleteValue(key, APP_NAME)
+                logger.info("开机自启已禁用")
+            except FileNotFoundError:
+                pass
+        winreg.CloseKey(key)
+        return True
+    except OSError as e:
+        logger.error(f"设置开机自启失败: {e}")
+        return False
+
+
+# --- 音效播放 ---
+SOUND_FILE = "assets/sounds/reminder.wav"
+
+
+def play_reminder_sound():
+    """播放提醒提示音"""
+    try:
+        sound_path = os.path.join(os.path.dirname(__file__), SOUND_FILE)
+        if getattr(sys, 'frozen', False):
+            # 打包后从临时目录读取
+            sound_path = os.path.join(sys._MEIPASS, SOUND_FILE)
+        if os.path.exists(sound_path):
+            winsound.PlaySound(sound_path, winsound.SND_FILENAME | winsound.SND_ASYNC)
+            logger.debug(f"播放提示音: {sound_path}")
+        else:
+            logger.warning(f"提示音文件不存在: {sound_path}")
+    except Exception as e:
+        logger.error(f"播放提示音失败: {e}")
+
+
+# --- 多显示器适配 ---
+def clamp_to_primary_screen(window: QWidget) -> None:
+    """确保窗口在主显示器范围内，防止跑到副屏消失"""
+    screen = QApplication.primaryScreen().geometry()
+    pos = window.pos()
+    size = window.size()
+
+    new_x = max(screen.left(), min(pos.x(), screen.right() - size.width()))
+    new_y = max(screen.top(), min(pos.y(), screen.bottom() - size.height()))
+
+    if pos.x() != new_x or pos.y() != new_y:
+        window.move(new_x, new_y)
+        logger.debug(f"窗口已从 ({pos.x()}, {pos.y()}) 拉回主屏 ({new_x}, {new_y})")
 
 
 # --- 日志配置 ---
@@ -149,11 +235,13 @@ class PetWindow(QWidget):
         logger.info("宠物窗口初始化完成（安静模式，右下角静止）")
 
     def _move_to_corner(self):
-        """移动到屏幕右下角（安静模式位置）"""
+        """移动到屏幕右下角（安静模式位置），确保在主屏范围内"""
         screen = QApplication.primaryScreen().geometry()
         x = screen.width() - self.width() - 20   # 距右边20px
         y = screen.height() - self.height() - 60  # 距底部60px（避开任务栏）
         self.move(x, y)
+        # 多显示器适配：确保窗口不会跑到副屏
+        clamp_to_primary_screen(self)
         logger.debug(f"宠物移至右下角: ({x}, {y})")
 
     def _show_static_frame(self):
@@ -212,9 +300,14 @@ class PetWindow(QWidget):
         tray_menu.addSeparator()
 
         # 安静模式切换
-        self._quiet_action = QAction("安静模式 ✓", self, checkable=True, checked=True)
+        self._quiet_action = QAction("安静模式", self, checkable=True, checked=True)
         self._quiet_action.triggered.connect(self._toggle_quiet_mode)
         tray_menu.addAction(self._quiet_action)
+
+        # 开机自启开关
+        self._autostart_action = QAction("开机自启", self, checkable=True, checked=is_auto_start_enabled())
+        self._autostart_action.triggered.connect(self._toggle_autostart)
+        tray_menu.addAction(self._autostart_action)
 
         tray_menu.addSeparator()
 
@@ -239,6 +332,13 @@ class PetWindow(QWidget):
             self._enter_quiet_mode()
         else:
             self._enter_active_mode()
+
+    def _toggle_autostart(self, checked):
+        """切换开机自启"""
+        if set_auto_start(checked):
+            self._autostart_action.setChecked(checked)
+            label = "已启用" if checked else "已禁用"
+            self.tray_icon.showMessage("开机自启", f"{label}，下次开机自动启动", QSystemTrayIcon.Information, 3000)
 
     def _quit_app(self):
         logger.info("用户退出程序")
@@ -271,7 +371,7 @@ class PetWindow(QWidget):
     def trigger_reminder(self, reminder: dict) -> None:
         """
         触发提醒回调（由提醒引擎信号连接到主线程调用）
-        提醒时：跳到屏幕中央 + 进入活跃模式 + 播放动画 + 弹窗
+        提醒时：跳到屏幕中央 + 进入活跃模式 + 播放动画 + 提示音 + 弹窗
         10秒后：恢复右下角安静模式
         """
         name = reminder.get("name", "提醒")
@@ -296,10 +396,14 @@ class PetWindow(QWidget):
         else:
             self.animation_player.play("cheer", fps=3, loop=True)
 
-        # 4. 弹出系统通知
+        # 4. 播放提示音
+        if sound_enabled:
+            play_reminder_sound()
+
+        # 5. 弹出系统通知
         self.tray_icon.showMessage(name, message, QSystemTrayIcon.Information, 5000)
 
-        # 5. 10秒后恢复安静模式（回到右下角，显示静态图片）
+        # 6. 10秒后恢复安静模式（回到右下角，显示静态图片）
         weak_self = weakref.ref(self)
         QTimer.singleShot(10000, lambda ws=weak_self: ws() and ws()._enter_quiet_mode())
 
@@ -323,11 +427,22 @@ class PetWindow(QWidget):
         menu.addAction("隐藏", self.hide)
         
         quiet_action = menu.addAction(
-            "安静模式 ✓" if self._quiet_mode else "活跃模式"
+            "安静模式" if self._quiet_mode else "活跃模式"
         )
         quiet_action.setCheckable(True)
         quiet_action.setChecked(self._quiet_mode)
         quiet_action.triggered.connect(self._toggle_quiet_mode)
+        
+        menu.addSeparator()
+        
+        autostart_action = menu.addAction(
+            "开机自启" if is_auto_start_enabled() else "开机自启"
+        )
+        autostart_action.setCheckable(True)
+        autostart_action.setChecked(is_auto_start_enabled())
+        autostart_action.triggered.connect(self._toggle_autostart)
+        
+        menu.addSeparator()
         
         menu.addAction("退出", self._quit_app)
         menu.exec_(event.globalPos())

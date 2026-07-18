@@ -56,6 +56,8 @@ class ReminderEngine(QThread):
         self._time_offset: float = 0.0
         # 贪睡管理器
         self._snooze_mgr = SnoozeManager()
+        # 线程锁：保护 _triggered_today 和 _snooze_mgr 的跨线程访问
+        self._lock = threading.Lock()
 
     # --- 网络时间校准 ---
     def set_time_offset(self, offset_seconds: float) -> None:
@@ -114,9 +116,10 @@ class ReminderEngine(QThread):
         # 跨天检测：日期变化时清空已触发记录和临时状态
         if self._last_check_date is not None and today_key != self._last_check_date:
             logger.info(f"日期变更: {self._last_check_date} -> {today_key}，重置触发记录")
-            self._triggered_today.clear()
-            self._snooze_mgr.reset_daily()
-        self._last_check_date = today_key
+            with self._lock:
+                self._triggered_today.clear()
+                self._snooze_mgr.reset_daily()
+            self._last_check_date = today_key
 
         for reminder in self._reminders:
             if not reminder.get("enabled", False):
@@ -131,20 +134,21 @@ class ReminderEngine(QThread):
             if reminder.get("weekdays_only", False) and not is_workday_from_datetime(now):
                 continue
 
-            # --- 二期：跳过检查 ---
-            if self._snooze_mgr.is_skipped(reminder_name):
-                continue
+            # --- 二期：状态检查（加锁保护）---
+            with self._lock:
+                skipped = self._snooze_mgr.is_skipped(reminder_name)
+                completed = self._snooze_mgr.is_completed(reminder_name)
+                snoozed = self._snooze_mgr.is_snoozed(reminder_name)
+                should_snooze_trigger = self._snooze_mgr.should_trigger_snooze(reminder_name) if snoozed else False
 
-            # --- 二期：已完成检查 ---
-            if self._snooze_mgr.is_completed(reminder_name):
+            if skipped or completed:
                 continue
 
             # --- 二期：贪睡检查 ---
-            # 如果这个提醒处于贪睡状态且还没到贪睡时间，跳过本次检查
-            if self._snooze_mgr.is_snoozed(reminder_name):
-                # 已到贪睡时间，触发并清除贪睡状态
-                if self._snooze_mgr.should_trigger_snooze(reminder_name):
-                    self._snooze_mgr.clear_snooze(reminder_name)
+            if snoozed:
+                if should_snooze_trigger:
+                    with self._lock:
+                        self._snooze_mgr.clear_snooze(reminder_name)
                     logger.info(f"贪睡提醒触发: {reminder_name}")
                     self._trigger_reminder(reminder)
                 continue
@@ -159,8 +163,12 @@ class ReminderEngine(QThread):
             current_time_key = f"{today_key}_{reminder_time}"
 
             # 检查是否已到时间且今天未触发
-            if now.hour == h and now.minute == m and current_time_key not in self._triggered_today:
-                self._triggered_today.add(current_time_key)
+            with self._lock:
+                already_triggered = current_time_key in self._triggered_today
+                if not already_triggered:
+                    self._triggered_today.add(current_time_key)
+
+            if not already_triggered and now.hour == h and now.minute == m:
                 logger.info(f"触发提醒: {reminder_name}")
                 self._trigger_reminder(reminder)
 
@@ -185,32 +193,33 @@ class ReminderEngine(QThread):
 
     # --- 二期：交互处理方法（由主线程通过槽函数调用）---
     def handle_snooze(self, reminder_name: str, minutes: int) -> None:
-        """处理贪睡请求"""
-        self._snooze_mgr.snooze(reminder_name, minutes)
-        # 标记为已触发，避免原时间点再次触发
-        now = self.get_effective_now()
-        today_key = _date_key(now)
-        # 将原提醒时间加入已触发集合，防止原时间点再触发
-        for r in self._reminders:
-            if r.get("name") == reminder_name and r.get("enabled"):
-                time_str = r.get("time", "")
-                if time_str:
-                    self._triggered_today.add(f"{today_key}_{time_str}")
-                break
+        """处理贪睡请求（主线程调用）"""
+        with self._lock:
+            self._snooze_mgr.snooze(reminder_name, minutes)
+            # 标记为已触发，避免原时间点再次触发
+            now = self.get_effective_now()
+            today_key = _date_key(now)
+            for r in self._reminders:
+                if r.get("name") == reminder_name and r.get("enabled"):
+                    time_str = r.get("time", "")
+                    if time_str:
+                        self._triggered_today.add(f"{today_key}_{time_str}")
+                    break
 
     def handle_skip_today(self, reminder_name: str) -> None:
-        """处理今天跳过请求"""
-        self._snooze_mgr.skip_today(reminder_name)
-        # 标记为已触发，避免原时间点再次触发
-        now = self.get_effective_now()
-        today_key = _date_key(now)
-        for r in self._reminders:
-            if r.get("name") == reminder_name and r.get("enabled"):
-                time_str = r.get("time", "")
-                if time_str:
-                    self._triggered_today.add(f"{today_key}_{time_str}")
-                break
+        """处理今天跳过请求（主线程调用）"""
+        with self._lock:
+            self._snooze_mgr.skip_today(reminder_name)
+            now = self.get_effective_now()
+            today_key = _date_key(now)
+            for r in self._reminders:
+                if r.get("name") == reminder_name and r.get("enabled"):
+                    time_str = r.get("time", "")
+                    if time_str:
+                        self._triggered_today.add(f"{today_key}_{time_str}")
+                    break
 
     def handle_complete(self, reminder_name: str) -> None:
-        """处理完成请求"""
-        self._snooze_mgr.complete(reminder_name)
+        """处理完成请求（主线程调用）"""
+        with self._lock:
+            self._snooze_mgr.complete(reminder_name)

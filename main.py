@@ -1,19 +1,16 @@
 """
 Desktop Pet - 桌面电子宠物 v2
 主入口：初始化应用、加载配置、启动提醒引擎和宠物窗口
-支持：安静模式/开机自启/音效/多显示器适配/闹钟管理/网络时间校准/天气信息
 """
+import shutil
 import sys
-import os
-import logging
 import weakref
-import winreg
-import winsound
 from pathlib import Path
+from typing import Optional
 
 from PyQt5.QtWidgets import (
     QApplication, QSystemTrayIcon, QMenu, QAction, QLabel, QWidget,
-    QVBoxLayout, QMessageBox, QDialog, QDialogButtonBox, QGridLayout
+    QVBoxLayout, QDialog, QDialogButtonBox, QGridLayout
 )
 from PyQt5.QtCore import Qt, QPoint, QTimer, pyqtSignal, pyqtSlot, QMetaObject, Q_ARG
 from PyQt5.QtGui import QPixmap, QIcon
@@ -22,123 +19,18 @@ from config_manager import ConfigManager
 from animation_player import AnimationPlayer
 from dingtalk_handler import open_dingtalk_checkin
 from bubble_widget import BubbleWidget
-from utils import get_exe_path
+from startup_utils import (
+    setup_logging, ensure_data_dir, cleanup_stale_autostart,
+    is_auto_start_enabled, set_auto_start, check_assets,
+    play_reminder_sound
+)
+
+logger = setup_logging()
+
+# 宠物闲逛时底部预留像素（为任务栏留出空间，避免被遮挡）
+TASKBAR_RESERVE_PX = 50
 
 
-# --- 开机自启管理 ---
-APP_NAME = "DesktopPet"
-REG_PATH = r"Software\Microsoft\Windows\CurrentVersion\Run"
-
-
-def is_auto_start_enabled() -> bool:
-    """检查开机自启是否已启用（仅检查注册表是否有值，不校验路径）"""
-    try:
-        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, REG_PATH, 0, winreg.KEY_READ)
-        try:
-            value, _ = winreg.QueryValueEx(key, APP_NAME)
-            winreg.CloseKey(key)
-            return bool(value)
-        except FileNotFoundError:
-            winreg.CloseKey(key)
-            return False
-    except OSError:
-        return False
-
-
-def get_registered_autostart_path() -> Optional[str]:
-    """获取注册表中记录的开机自启路径（用于检测exe是否被移动）"""
-    try:
-        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, REG_PATH, 0, winreg.KEY_READ)
-        try:
-            value, _ = winreg.QueryValueEx(key, APP_NAME)
-            winreg.CloseKey(key)
-            return value
-        except FileNotFoundError:
-            winreg.CloseKey(key)
-            return None
-    except OSError:
-        return None
-
-
-def cleanup_stale_autostart() -> bool:
-    """检测并清理失效的开机自启注册表条目（exe被移动后）"""
-    registered_path = get_registered_autostart_path()
-    if registered_path is None:
-        return True  # 无注册表条目，无需清理
-    
-    current_path = get_exe_path()
-    if registered_path == current_path:
-        return True  # 路径一致，无需清理
-    
-    # 检查注册表中的旧路径是否还有效
-    if os.path.exists(registered_path):
-        return True  # 旧路径仍然有效（可能是多实例），不清理
-    
-    # 旧路径已失效，清理注册表
-    logger.warning(f"检测到失效的开机自启路径: {registered_path}，当前路径: {current_path}")
-    try:
-        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, REG_PATH, 0, winreg.KEY_WRITE)
-        winreg.DeleteValue(key, APP_NAME)
-        winreg.CloseKey(key)
-        logger.info("已清理失效的开机自启注册表条目")
-        return True
-    except OSError as e:
-        logger.error(f"清理失效的开机自启注册表条目失败: {e}")
-        return False
-
-
-def set_auto_start(enabled: bool) -> bool:
-    """设置开机自启。启用时会先清理旧路径再写入新路径"""
-    try:
-        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, REG_PATH, 0, winreg.KEY_WRITE)
-        if enabled:
-            # 先清理可能存在的旧路径
-            try:
-                winreg.DeleteValue(key, APP_NAME)
-            except FileNotFoundError:
-                pass
-            winreg.SetValueEx(key, APP_NAME, 0, winreg.REG_SZ, get_exe_path())
-            logger.info(f"开机自启已启用: {get_exe_path()}")
-        else:
-            try:
-                winreg.DeleteValue(key, APP_NAME)
-                logger.info("开机自启已禁用")
-            except FileNotFoundError:
-                pass
-        winreg.CloseKey(key)
-        return True
-    except OSError as e:
-        logger.error(f"设置开机自启失败: {e}")
-        return False
-
-
-# --- 音效播放 ---
-DEFAULT_SOUND_FILE = "assets/sounds/reminder.wav"
-
-
-def play_reminder_sound(sound_file: str = None):
-    """播放提醒提示音
-
-    Args:
-        sound_file: 相对路径的音频文件（WAV格式），如 "assets/sounds/xxx.wav"。
-                    为空则使用默认提示音。
-    """
-    try:
-        file_to_play = sound_file if sound_file else DEFAULT_SOUND_FILE
-        sound_path = os.path.join(os.path.dirname(__file__), file_to_play)
-        if getattr(sys, 'frozen', False):
-            # 打包后从临时目录读取
-            sound_path = os.path.join(sys._MEIPASS, file_to_play)
-        if os.path.exists(sound_path):
-            winsound.PlaySound(sound_path, winsound.SND_FILENAME | winsound.SND_ASYNC)
-            logger.debug(f"播放提示音: {sound_path}")
-        else:
-            logger.warning(f"提示音文件不存在: {sound_path}")
-    except Exception as e:
-        logger.error(f"播放提示音失败: {e}")
-
-
-# --- 多显示器适配 ---
 def clamp_to_primary_screen(window: QWidget) -> None:
     """确保窗口在主显示器范围内，防止跑到副屏消失"""
     screen = QApplication.primaryScreen().geometry()
@@ -151,102 +43,6 @@ def clamp_to_primary_screen(window: QWidget) -> None:
     if pos.x() != new_x or pos.y() != new_y:
         window.move(new_x, new_y)
         logger.debug(f"窗口已从 ({pos.x()}, {pos.y()}) 拉回主屏 ({new_x}, {new_y})")
-
-
-# --- 应用数据目录（与 exe 同级，完全便携）---
-def get_app_data_dir() -> Path:
-    """获取应用数据目录：exe 同级的 data 文件夹，所有数据不写 C 盘"""
-    if getattr(sys, 'frozen', False):
-        return Path(sys.executable).parent / "data"
-    else:
-        return Path(__file__).parent / "data"
-
-
-def ensure_data_dir():
-    """首次运行时创建 data 目录并复制默认配置文件"""
-    data_dir = get_app_data_dir()
-    data_dir.mkdir(parents=True, exist_ok=True)
-
-    # 复制默认 config.yaml（如果不存在）
-    default_config = data_dir / "config.yaml"
-    if not default_config.exists():
-        try:
-            import shutil
-            if getattr(sys, 'frozen', False):
-                # 打包后：从临时解压目录复制
-                bundled = Path(sys._MEIPASS) / "config.yaml"
-            else:
-                # 开发模式：从项目根目录复制
-                bundled = Path(__file__).parent / "config.yaml"
-            if bundled.exists():
-                shutil.copy2(bundled, default_config)
-                logger.info(f"已复制默认配置: {default_config}")
-        except Exception as e:
-            logger.warning(f"复制默认配置失败: {e}")
-
-
-# --- 日志配置 ---
-def setup_logging():
-    """配置日志"""
-    log_dir = get_app_data_dir() / "logs"
-    log_dir.mkdir(parents=True, exist_ok=True)
-    
-    log_file = log_dir / "pet.log"
-    
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-        handlers=[
-            logging.FileHandler(log_file, encoding="utf-8"),
-            logging.StreamHandler()
-        ]
-    )
-    return logging.getLogger("DesktopPet")
-
-
-logger = setup_logging()
-
-
-# 宠物闲逛时底部预留像素（为任务栏留出空间，避免被遮挡）
-TASKBAR_RESERVE_PX = 50
-
-# 必需的动画资源目录
-REQUIRED_ANIMATIONS = ("cheer",)
-
-
-def _check_assets(pet_window) -> None:
-    """启动时检查素材完整性，缺失时弹出警告"""
-    if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
-        assets_dir = Path(sys._MEIPASS) / "assets" / "animations"
-    else:
-        assets_dir = Path(__file__).parent / "assets" / "animations"
-    missing = []
-    empty = []
-    for anim_name in REQUIRED_ANIMATIONS:
-        anim_dir = assets_dir / anim_name
-        if not anim_dir.exists():
-            missing.append(anim_name)
-        elif not any(anim_dir.glob("*.png")):
-            empty.append(anim_name)
-
-    issues = []
-    if missing:
-        issues.append(f"缺失目录: {', '.join(missing)}")
-    if empty:
-        issues.append(f"目录为空: {', '.join(empty)}")
-
-    if issues:
-        msg = (
-            f"素材不完整，宠物可能无法正常显示。\n\n"
-            f"{''.join(issues)}\n\n"
-            f"请检查 assets/animations/ 目录下是否有对应的 PNG 序列帧文件。"
-        )
-        logger.warning(msg)
-        # 使用 QTimer 延迟弹窗，避免在构造期间阻塞
-        from PyQt5.QtWidgets import QMessageBox
-        QTimer.singleShot(500, lambda: QMessageBox.warning(
-            pet_window, "素材缺失", msg, QMessageBox.Ok
-        ))
 
 
 class PetWindow(QWidget):
@@ -727,7 +523,7 @@ def main():
     pet_window = PetWindow(config=config.get("pet", {}))
 
     # 2b. 检查素材完整性
-    _check_assets(pet_window)
+    check_assets(pet_window)
 
     # 3. 创建提醒引擎
     from reminder_engine import ReminderEngine

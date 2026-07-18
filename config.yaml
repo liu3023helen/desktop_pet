@@ -36,8 +36,8 @@ time_sync:
 
 # --- 天气信息（二期）---
 weather:
-  enabled: false
+  enabled: true
   city: "北京"
-  api_provider: "qweather"         # qweather / openweathermap
-  api_key: ""                      # 和风天气API Key（需自行申请）
+  api_provider: "openmeteo"        # openmeteo(免Key) / qweather / openweathermap
+  api_key: ""                      # 和风天气/OpenWeatherMap需要填入Key
   update_interval_minutes: 60

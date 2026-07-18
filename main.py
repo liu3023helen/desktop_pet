@@ -103,19 +103,42 @@ def clamp_to_primary_screen(window: QWidget) -> None:
         logger.debug(f"窗口已从 ({pos.x()}, {pos.y()}) 拉回主屏 ({new_x}, {new_y})")
 
 
-# --- 日志配置 ---
-def _get_app_data_dir() -> Path:
-    """获取应用数据目录，跨平台兼容"""
-    if sys.platform == "win32":
-        return Path(os.environ.get("APPDATA", ""))
+# --- 应用数据目录（与 exe 同级，完全便携）---
+def get_app_data_dir() -> Path:
+    """获取应用数据目录：exe 同级的 data 文件夹，所有数据不写 C 盘"""
+    if getattr(sys, 'frozen', False):
+        return Path(sys.executable).parent / "data"
     else:
-        # Linux/macOS: ~/.local/share/DesktopPet
-        return Path.home() / ".local" / "share"
+        return Path(__file__).parent / "data"
 
 
+def ensure_data_dir():
+    """首次运行时创建 data 目录并复制默认配置文件"""
+    data_dir = get_app_data_dir()
+    data_dir.mkdir(parents=True, exist_ok=True)
+
+    # 复制默认 config.yaml（如果不存在）
+    default_config = data_dir / "config.yaml"
+    if not default_config.exists():
+        try:
+            import shutil
+            if getattr(sys, 'frozen', False):
+                # 打包后：从临时解压目录复制
+                bundled = Path(sys._MEIPASS) / "config.yaml"
+            else:
+                # 开发模式：从项目根目录复制
+                bundled = Path(__file__).parent / "config.yaml"
+            if bundled.exists():
+                shutil.copy2(bundled, default_config)
+                logger.info(f"已复制默认配置: {default_config}")
+        except Exception as e:
+            logger.warning(f"复制默认配置失败: {e}")
+
+
+# --- 日志配置 ---
 def setup_logging():
     """配置日志"""
-    log_dir = _get_app_data_dir() / "DesktopPet" / "logs"
+    log_dir = get_app_data_dir() / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
     
     log_file = log_dir / "pet.log"
@@ -469,6 +492,9 @@ def main():
     # 启用高分屏DPI缩放
     app.setAttribute(Qt.AA_EnableHighDpiScaling)
     app.setAttribute(Qt.AA_UseHighDpiPixmaps)
+
+    # 0. 确保数据目录存在（首次运行创建 data/ 并复制默认配置）
+    ensure_data_dir()
 
     # 1. 初始化配置管理器
     config_mgr = ConfigManager()

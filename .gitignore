@@ -31,8 +31,11 @@ assets/source_*.png
 logs/
 *.log
 
-# Config (user-specific)
-config.yaml
+# Runtime data (portable - same directory as exe)
+data/
+
+# Config (user-specific, runtime-generated in data/)
+# Note: config.yaml at project root is the default template and IS tracked
 
 # Test artifacts
 test_output.txt

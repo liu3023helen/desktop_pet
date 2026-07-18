@@ -1,0 +1,27 @@
+# 电子宠物提醒配置
+# 路径：%APPDATA%\DesktopPet\config.yaml
+# 首次运行时自动从模板释放
+
+pet:
+  name: "小新"
+  style: "shinchan"
+  default_animation: "cheer"
+
+reminders:
+  - name: "下班打卡"
+    enabled: true
+    time: "18:30"
+    action_type: "open_url"
+    action_target: "dingtalk://dingtalkclient/page/link?pc_slide=false&url=https://im.dingtalk.com/attendancemobile/index.html"
+    animation: "cheer"
+    message: "下班啦！快去打卡~"
+    sound: true
+
+  # --- 扩展示例（取消注释即可启用）---
+  # - name: "运动提醒"
+  #   enabled: false
+  #   time: "20:00"
+  #   action_type: "play_animation"
+  #   animation: "walk"
+  #   message: "该起来动一动了！"
+  #   sound: true

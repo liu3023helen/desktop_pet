@@ -1,11 +1,20 @@
 """
 配置管理器 - 负责读取和解析 YAML 配置文件
 支持热重载：配置文件修改后自动重新加载
+所有数据存储在 exe 同级 data/ 目录下，完全便携不写 C 盘
 """
-import os
+import sys
 import yaml
 from pathlib import Path
 from typing import Dict, Any, Optional
+
+
+def get_exe_dir() -> Path:
+    """获取 exe（或脚本）所在目录"""
+    if getattr(sys, 'frozen', False):
+        return Path(sys.executable).parent
+    else:
+        return Path(__file__).parent
 
 
 def _deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
@@ -28,9 +37,8 @@ class ConfigManager:
         if config_path:
             self.config_path = Path(config_path)
         else:
-            # 默认路径：%APPDATA%\DesktopPet\config.yaml
-            appdata = Path(os.environ.get("APPDATA", ""))
-            self.config_path = appdata / "DesktopPet" / "config.yaml"
+            # 默认路径：exe 同级 data/config.yaml（完全便携）
+            self.config_path = get_exe_dir() / "data" / "config.yaml"
 
     def load(self) -> Dict[str, Any]:
         """加载配置文件并返回字典"""

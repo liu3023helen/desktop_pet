@@ -11,7 +11,7 @@ ROOT = Path(__file__).parent
 DIST_DIR = ROOT / "dist"
 BUILD_DIR = ROOT / "build"
 MAIN = ROOT / "main.py"
-ICON = ROOT / "assets" / "icon.ico"
+ICON = ROOT / "resources" / "icon.ico"
 SPEC = ROOT / "DesktopPet.spec"
 
 # 清理旧构建
@@ -24,10 +24,16 @@ if SPEC.exists():
     SPEC.unlink()
 
 # 数据文件包含（素材、配置等）
+# Windows下 --add-data 格式: "源路径;目标路径"
 datas = [
-    str(ROOT / "assets"),           # 动画帧、图标
-    str(ROOT / "config.yaml"),      # 默认配置
+    (str(ROOT / "assets"), "assets"),           # 动画帧、图标
+    (str(ROOT / "config.yaml"), "."),           # 默认配置
 ]
+
+# 构建 --add-data 参数
+add_data_args = []
+for src, dst in datas:
+    add_data_args.append(f"--add-data={src};{dst}")
 
 # 隐藏控制台 + 单文件 + 图标
 cmd = [
@@ -37,7 +43,7 @@ cmd = [
     "--windowed",                   # GUI模式
     f"--icon={ICON}",               # 图标
     "--name=DesktopPet",            # exe名称
-    "--add-data=" + ";".join(datas),# 包含素材目录
+] + add_data_args + [
     "--collect-all=PyQt5",         # 包含PyQt5全部资源
     "--hidden-import=yaml",
     "--hidden-import=PyYAML",

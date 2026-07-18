@@ -27,8 +27,13 @@ class WeatherInfo:
 class WeatherProvider:
     """天气API提供者基类"""
 
-    def fetch(self, city: str) -> Optional[WeatherInfo]:
-        """获取天气信息，子类实现"""
+    def fetch(self, city: str, api_key: str = "") -> Optional[WeatherInfo]:
+        """获取天气信息，子类实现
+        
+        Args:
+            city: 城市名称
+            api_key: API密钥（Open-Meteo 不需要）
+        """
         raise NotImplementedError
 
 
@@ -80,7 +85,7 @@ class OpenMeteoProvider(WeatherProvider):
         99: "强雷阵雨",
     }
 
-    def fetch(self, city: str) -> Optional[WeatherInfo]:
+    def fetch(self, city: str, api_key: str = "") -> Optional[WeatherInfo]:
         try:
             # 1. 地理编码：城市名 -> 经纬度
             geo_url = f"{self.GEO_URL}?name={urllib.parse.quote(city)}&count=1&language=zh&format=json"
@@ -238,11 +243,7 @@ class WeatherService:
 
         for provider in self._providers:
             try:
-                # Open-Meteo 不需要 api_key，其他需要
-                if isinstance(provider, OpenMeteoProvider):
-                    info = provider.fetch(city)
-                else:
-                    info = provider.fetch(city, self._api_key)
+                info = provider.fetch(city, self._api_key)
 
                 if info is not None:
                     self._last_result = info

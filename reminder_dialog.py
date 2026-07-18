@@ -148,6 +148,8 @@ class ReminderFormDialog(QDialog):
         """根据动作类型显示/隐藏URL输入框"""
         visible = (index == 0)  # "打开URL" 是第0项
         self._url_edit.setVisible(visible)
+        if not visible:
+            self._url_edit.clear()
         label = self._url_edit.parent().findChild(QLabel)
         if label:
             label.setVisible(visible)

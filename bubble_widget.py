@@ -78,7 +78,6 @@ class BubbleWidget(QLabel):
 
         self.show()
         self.raise_()
-        self.activateWindow()
         logger.info(f"[BubbleWidget] isVisible={self.isVisible()}, isHidden={self.isHidden()}")
 
         self._hide_timer.start(duration_ms)

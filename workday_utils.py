@@ -3,19 +3,17 @@
 支持从 config.yaml 读取法定节假日/调休配置
 """
 import logging
-import sys
 from datetime import datetime, date
-from pathlib import Path
 from typing import Optional
+
+from utils import get_app_dir
 
 logger = logging.getLogger(__name__)
 
 
-def _get_data_dir() -> Path:
-    """获取 data 目录路径（兼容开发模式和打包模式）"""
-    if getattr(sys, 'frozen', False):
-        return Path(sys.executable).parent / "data"
-    return Path(__file__).parent / "data"
+def _get_data_dir():
+    """获取 data 目录路径"""
+    return get_app_dir() / "data"
 
 
 # --- 法定节假日/调休配置（从 config.yaml 自动加载）---

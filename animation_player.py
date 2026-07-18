@@ -11,14 +11,9 @@ from PyQt5.QtWidgets import QLabel
 from PyQt5.QtCore import QTimer
 from PyQt5.QtGui import QPixmap
 
+from utils import get_resource_path
+
 logger = logging.getLogger(__name__)
-
-
-def _get_resource_path(relative_path: str) -> Path:
-    """获取资源文件的绝对路径（兼容开发模式和PyInstaller打包模式）"""
-    if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
-        return Path(sys._MEIPASS) / relative_path
-    return Path(__file__).parent / relative_path
 
 
 class AnimationPlayer:
@@ -28,7 +23,7 @@ class AnimationPlayer:
         if assets_dir:
             self.assets_dir = Path(assets_dir)
         else:
-            self.assets_dir = _get_resource_path("assets/animations")
+            self.assets_dir = get_resource_path("assets/animations")
 
         # 已加载的动画帧缓存 {动画名: [QPixmap列表]}
         self._frames_cache: Dict[str, List[QPixmap]] = {}

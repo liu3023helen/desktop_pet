@@ -22,19 +22,12 @@ from config_manager import ConfigManager
 from animation_player import AnimationPlayer
 from dingtalk_handler import open_dingtalk_checkin
 from bubble_widget import BubbleWidget
+from utils import get_exe_path
 
 
 # --- 开机自启管理 ---
 APP_NAME = "DesktopPet"
 REG_PATH = r"Software\Microsoft\Windows\CurrentVersion\Run"
-
-
-def get_exe_path() -> str:
-    """获取当前 exe 路径（兼容开发模式和打包模式）"""
-    if getattr(sys, 'frozen', False):
-        return sys.executable
-    else:
-        return os.path.abspath(sys.argv[0])
 
 
 def is_auto_start_enabled() -> bool:

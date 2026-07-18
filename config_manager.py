@@ -9,15 +9,9 @@ import yaml
 from pathlib import Path
 from typing import Dict, Any, Optional
 
+from utils import get_app_dir
+
 logger = logging.getLogger(__name__)
-
-
-def get_exe_dir() -> Path:
-    """获取 exe（或脚本）所在目录"""
-    if getattr(sys, 'frozen', False):
-        return Path(sys.executable).parent
-    else:
-        return Path(__file__).parent
 
 
 def _deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
@@ -41,7 +35,7 @@ class ConfigManager:
             self.config_path = Path(config_path)
         else:
             # 默认路径：exe 同级 data/config.yaml（完全便携）
-            self.config_path = get_exe_dir() / "data" / "config.yaml"
+            self.config_path = get_app_dir() / "data" / "config.yaml"
 
     def load(self) -> Dict[str, Any]:
         """加载配置文件并返回字典"""

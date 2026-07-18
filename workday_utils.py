@@ -1,19 +1,74 @@
 """
 工作日判断工具 - 纯本地实现，不依赖网络
-预留法定节假日扩展接口
+支持从 config.yaml 读取法定节假日/调休配置
 """
+import logging
+import sys
 from datetime import datetime, date
-from typing import Optional, Set
+from pathlib import Path
+from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 
-# --- 法定节假日/调休配置（手动维护或从网络更新）---
+def _get_data_dir() -> Path:
+    """获取 data 目录路径（兼容开发模式和打包模式）"""
+    if getattr(sys, 'frozen', False):
+        return Path(sys.executable).parent / "data"
+    return Path(__file__).parent / "data"
+
+
+# --- 法定节假日/调休配置（从 config.yaml 自动加载）---
 # 格式: "YYYY-MM-DD": True(调休上班) / False(法定假日)
 # True 表示虽然是周末但需要上班，False 表示虽然是工作日但是假日
 HOLIDAY_OVERRIDE: dict = {}
 
 
+def load_holidays_from_yaml(config_path: Optional[Path] = None) -> dict:
+    """从 YAML 配置文件加载节假日数据
+    
+    Args:
+        config_path: 配置文件路径，默认使用 data/config.yaml
+        
+    Returns:
+        节假日字典 {"YYYY-MM-DD": bool}
+    """
+    if config_path is None:
+        config_path = _get_data_dir() / "config.yaml"
+    
+    if not config_path.exists():
+        logger.warning(f"配置文件不存在: {config_path}")
+        return {}
+    
+    try:
+        import yaml
+        with open(config_path, 'r', encoding='utf-8') as f:
+            config = yaml.safe_load(f) or {}
+        
+        holidays = config.get("holidays", {})
+        if holidays:
+            logger.info(f"从配置加载了 {len(holidays)} 条节假日规则")
+            return dict(holidays)
+        else:
+            logger.debug("配置文件中无节假日数据")
+            return {}
+    except Exception as e:
+        logger.error(f"加载节假日配置失败: {e}")
+        return {}
+
+
+def load_holidays() -> None:
+    """从配置文件加载节假日数据到全局 HOLIDAY_OVERRIDE"""
+    global HOLIDAY_OVERRIDE
+    HOLIDAY_OVERRIDE = load_holidays_from_yaml()
+
+
+# 模块初始化时自动加载
+load_holidays()
+
+
 def set_holiday_override(holidays: dict) -> None:
-    """设置节假日覆盖规则（从网络接口获取后调用）"""
+    """设置节假日覆盖规则（运行时动态更新）"""
     global HOLIDAY_OVERRIDE
     HOLIDAY_OVERRIDE = holidays
 

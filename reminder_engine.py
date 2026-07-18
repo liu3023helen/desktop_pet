@@ -163,12 +163,18 @@ class ReminderEngine(QThread):
             current_time_key = f"{today_key}_{reminder_time}"
 
             # 检查是否已到时间且今天未触发
-            with self._lock:
-                already_triggered = current_time_key in self._triggered_today
-                if not already_triggered:
-                    self._triggered_today.add(current_time_key)
+            # 休眠唤醒容错：检查当前时间及过去 60 秒内是否有未触发的提醒
+            triggered = False
+            for offset in range(61):  # 0~60 秒窗口
+                check_time = now - timedelta(seconds=offset)
+                if check_time.hour == h and check_time.minute == m:
+                    with self._lock:
+                        if current_time_key not in self._triggered_today:
+                            self._triggered_today.add(current_time_key)
+                            triggered = True
+                    break
 
-            if not already_triggered and now.hour == h and now.minute == m:
+            if triggered:
                 logger.info(f"触发提醒: {reminder_name}")
                 self._trigger_reminder(reminder)
 

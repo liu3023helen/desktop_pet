@@ -13,14 +13,15 @@ from pathlib import Path
 
 from PyQt5.QtWidgets import (
     QApplication, QSystemTrayIcon, QMenu, QAction, QLabel, QWidget,
-    QVBoxLayout, QMessageBox
+    QVBoxLayout, QMessageBox, QDialog, QDialogButtonBox, QGridLayout
 )
-from PyQt5.QtCore import Qt, QPoint, QTimer, pyqtSignal
+from PyQt5.QtCore import Qt, QPoint, QTimer, pyqtSignal, pyqtSlot, QMetaObject, Q_ARG
 from PyQt5.QtGui import QPixmap, QIcon
 
 from config_manager import ConfigManager
 from animation_player import AnimationPlayer
 from dingtalk_handler import open_dingtalk_checkin
+from bubble_widget import BubbleWidget
 
 
 # --- 开机自启管理 ---
@@ -221,7 +222,9 @@ class PetWindow(QWidget):
 
         # 安静模式：默认停在屏幕右下角，不闲逛
         self._quiet_mode = True
-        self._original_velocity = QPoint(2, 0)  # 活跃模式的速度
+        self._original_velocity = QPoint(1, 0)  # 活跃模式的速度（缩小范围）
+        # 活跃模式下的X轴活动范围比例（0~1），0.4表示只在屏幕中间40%宽度内移动
+        self._wander_x_range_ratio = 0.4
 
         # 初始位置：屏幕右下角（安静模式）
         self._move_to_corner()
@@ -254,6 +257,9 @@ class PetWindow(QWidget):
         self.wander_timer = QTimer(self)
         self.wander_timer.timeout.connect(self._wander_step)
         # 安静模式：不启动闲逛
+
+        # 漫画对话气泡（闹钟/天气文字展示）
+        self.bubble = BubbleWidget(pet_window=self)
 
         # 配置管理器引用（由外部设置）
         self._config_mgr = None
@@ -452,30 +458,46 @@ class PetWindow(QWidget):
             self.tray_icon.showMessage("时间校准失败", str(e), QSystemTrayIcon.Warning, 4000)
 
     def _show_weather(self):
-        """显示天气信息"""
+        """显示天气信息（漫画气泡 + 托盘通知）"""
+        logger.info("[Weather] _show_weather called")
         try:
             from weather_service import WeatherService
             config = self._config_mgr.load() if self._config_mgr else {}
             weather_cfg = config.get("weather", {})
             city = weather_cfg.get("city", "北京")
 
-            self.tray_icon.showMessage("天气查询中", f"正在获取 {city} 的天气信息...", QSystemTrayIcon.Information, 2000)
+            logger.info(f"[Weather] config loaded: city={city}, weather_cfg={weather_cfg}")
+            logger.info(f"[Weather] bubble instance: {self.bubble}")
+
+            self.tray_icon.showMessage("天气查询中", f"正在获取 {city} 的天气信息...", QSystemTrayIcon.Information, 1500)
 
             def do_fetch():
-                service = WeatherService(config=weather_cfg)
-                info = service.get_weather(city)
-                if info:
-                    msg = f"{info.city} {info.condition} {info.temperature}°C"
-                    if info.humidity:
-                        msg += f" 湿度{info.humidity}%"
-                    QTimer.singleShot(100, lambda m=msg: self.tray_icon.showMessage(
-                        "天气信息", m, QSystemTrayIcon.Information, 5000
-                    ))
-                else:
-                    QTimer.singleShot(100, lambda: self.tray_icon.showMessage(
-                        "天气查询失败", "无法获取天气信息，请检查网络和API配置",
-                        QSystemTrayIcon.Warning, 4000
-                    ))
+                logger.info("[Weather] do_fetch started in thread")
+                try:
+                    service = WeatherService(config=weather_cfg)
+                    info = service.get_weather(city)
+                    logger.info(f"[Weather] get_weather result: {info}")
+                    if info:
+                        msg = f"{info.city} · {info.condition} · {info.temperature}°C"
+                        if info.humidity:
+                            msg += f"\n湿度 {info.humidity}%"
+                        logger.info(f"[Weather] formatted msg: {msg!r}")
+                    else:
+                        logger.warning("[Weather] info is None")
+                        msg = "天气查询失败\n请稍后再试"
+                    # 用 invokeMethod 安全投递到主线程（QTimer.singleShot 在子线程创建无效）
+                    QMetaObject.invokeMethod(
+                        self, "_show_weather_bubble",
+                        Qt.QueuedConnection,
+                        Q_ARG(str, msg)
+                    )
+                except Exception as e:
+                    logger.error(f"[Weather] do_fetch exception: {e}")
+                    QMetaObject.invokeMethod(
+                        self, "_show_weather_bubble",
+                        Qt.QueuedConnection,
+                        Q_ARG(str, f"天气查询异常: {e}")
+                    )
 
             import threading
             threading.Thread(target=do_fetch, daemon=True).start()
@@ -483,18 +505,32 @@ class PetWindow(QWidget):
             QMessageBox.warning(self, "功能未就绪", "天气模块尚未集成")
         except Exception as e:
             logger.error(f"天气查询失败: {e}")
-            self.tray_icon.showMessage("天气查询失败", str(e), QSystemTrayIcon.Warning, 4000)
+            self.bubble.show_bubble("天气查询失败", duration_ms=4000)
+
+    @pyqtSlot(str)
+    def _show_weather_bubble(self, msg: str):
+        """在主线程显示天气气泡"""
+        logger.info(f"[Weather] _show_weather_bubble: msg={msg!r}")
+        logger.info(f"[Weather] bubble before show: visible={self.bubble.isVisible()}")
+        self.bubble.show_bubble(msg, duration_ms=6000)
+        logger.info(f"[Weather] bubble after show: visible={self.bubble.isVisible()}")
+        self.tray_icon.showMessage("天气信息", msg.replace("\n", " "), QSystemTrayIcon.Information, 5000)
 
     def _wander_step(self):
-        """闲逛步进逻辑"""
+        """闲逛步进逻辑 — 限制在屏幕中央区域活动"""
         screen = QApplication.primaryScreen().geometry()
         new_x = self.x() + self._velocity.x()
         new_y = self.y() + self._velocity.y()
 
-        # 边界检测 - 碰到左右边界反向
-        if new_x <= 0 or new_x + self.width() >= screen.width():
+        # 限制X轴活动范围：屏幕中央的 wander_x_range_ratio 宽度
+        range_w = int(screen.width() * self._wander_x_range_ratio)
+        center_x = screen.width() // 2
+        x_min = center_x - range_w // 2
+        x_max = center_x + range_w // 2 - self.width()
+
+        if new_x <= x_min or new_x >= x_max:
             self._velocity.setX(-self._velocity.x())
-            new_x = max(0, min(new_x, screen.width() - self.width()))
+            new_x = max(x_min, min(new_x, x_max))
 
         # 限制Y轴范围（底部预留任务栏空间）
         if new_y < 0:
@@ -509,7 +545,7 @@ class PetWindow(QWidget):
     def trigger_reminder(self, reminder: dict) -> None:
         """
         触发提醒回调（由提醒引擎信号连接到主线程调用）
-        提醒时：跳到屏幕中央 + 进入活跃模式 + 播放动画 + 提示音 + 弹窗
+        提醒时：跳到屏幕中央 + 进入活跃模式 + 播放动画 + 提示音 + 气泡文字
         10秒后：恢复右下角安静模式
         """
         name = reminder.get("name", "提醒")
@@ -538,7 +574,8 @@ class PetWindow(QWidget):
         if sound_enabled:
             play_reminder_sound()
 
-        # 5. 弹出系统通知
+        # 5. 漫画气泡展示提醒文案（同时保留托盘通知作为辅助）
+        self.bubble.show_bubble(message, duration_ms=8000)
         self.tray_icon.showMessage(name, message, QSystemTrayIcon.Information, 5000)
 
         # 6. 10秒后恢复安静模式（回到右下角，显示静态图片）

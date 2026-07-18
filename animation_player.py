@@ -2,6 +2,7 @@
 序列帧动画播放器
 支持多套PNG序列帧动画加载、帧率控制、alpha透明合成、平滑切换
 """
+import logging
 import sys
 from pathlib import Path
 from typing import Dict, List, Optional, Callable
@@ -9,6 +10,8 @@ from typing import Dict, List, Optional, Callable
 from PyQt5.QtWidgets import QLabel
 from PyQt5.QtCore import QTimer
 from PyQt5.QtGui import QPixmap
+
+logger = logging.getLogger(__name__)
 
 
 def _get_resource_path(relative_path: str) -> Path:
@@ -66,13 +69,13 @@ class AnimationPlayer:
         """
         anim_dir = self.assets_dir / name
         if not anim_dir.exists():
-            print(f"[Animation] 动画目录不存在: {anim_dir}")
+            logger.warning(f"动画目录不存在: {anim_dir}")
             return False
 
         # 收集所有PNG文件并按文件名排序
         png_files = sorted(anim_dir.glob("*.png"))
         if not png_files:
-            print(f"[Animation] 动画目录无PNG文件: {anim_dir}")
+            logger.warning(f"动画目录无PNG文件: {anim_dir}")
             return False
 
         frames = []
@@ -85,7 +88,7 @@ class AnimationPlayer:
             self._frames_cache[name] = frames
             if name == self._current_animation:
                 self._fps = fps
-            print(f"[Animation] 加载动画 '{name}': {len(frames)}帧 @ {fps}fps")
+            logger.info(f"加载动画 '{name}': {len(frames)}帧 @ {fps}fps")
             return True
 
         return False

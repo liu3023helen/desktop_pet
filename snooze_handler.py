@@ -2,8 +2,11 @@
 贪睡/跳过/完成状态管理器
 管理提醒的临时状态，程序重启后自动失效（不持久化）
 """
+import logging
 from datetime import datetime, timedelta
 from typing import Dict, Optional, Set
+
+logger = logging.getLogger(__name__)
 
 
 class SnoozeManager:
@@ -23,7 +26,7 @@ class SnoozeManager:
         """检查是否需要跨天重置"""
         today_key = datetime.now().strftime("%Y-%m-%d")
         if self._last_reset_date is not None and today_key != self._last_reset_date:
-            print("[Snooze] 日期变更，重置所有临时状态")
+            logger.info("日期变更，重置所有临时状态")
             self.reset_daily()
         self._last_reset_date = today_key
 
@@ -42,7 +45,7 @@ class SnoozeManager:
         # 贪睡时自动清除跳过和完成状态
         self._skipped_today.discard(reminder_name)
         self._completed.discard(reminder_name)
-        print(f"[Snooze] '{reminder_name}' 贪睡 {minutes} 分钟，下次触发: {next_time.strftime('%H:%M')}")
+        logger.info(f"'{reminder_name}' 贪睡 {minutes} 分钟，下次触发: {next_time.strftime('%H:%M')}")
 
     def get_snooze_time(self, reminder_name: str) -> Optional[datetime]:
         """获取提醒的贪睡触发时间，None表示未贪睡"""
@@ -77,7 +80,7 @@ class SnoozeManager:
         # 跳过时清除贪睡状态
         self._snoozed.pop(reminder_name, None)
         self._completed.discard(reminder_name)
-        print(f"[Snooze] '{reminder_name}' 今天跳过")
+        logger.info(f"'{reminder_name}' 今天跳过")
 
     def is_skipped(self, reminder_name: str) -> bool:
         """检查提醒是否被今天跳过"""
@@ -91,7 +94,7 @@ class SnoozeManager:
         # 完成时清除贪睡和跳过状态
         self._snoozed.pop(reminder_name, None)
         self._skipped_today.discard(reminder_name)
-        print(f"[Snooze] '{reminder_name}' 标记为已完成")
+        logger.info(f"'{reminder_name}' 标记为已完成")
 
     def is_completed(self, reminder_name: str) -> bool:
         """检查提醒是否已完成"""

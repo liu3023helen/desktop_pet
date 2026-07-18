@@ -3,6 +3,7 @@
 策略模式：不同action_type对应不同处理器，新增提醒类型只需改配置
 二期增强：网络时间偏移 + 工作日判断 + 贪睡/跳过/完成交互
 """
+import logging
 import threading
 import time
 from datetime import datetime, timedelta
@@ -14,6 +15,8 @@ from PyQt5.QtWidgets import QMessageBox
 
 from snooze_handler import SnoozeManager
 from workday_utils import is_workday_from_datetime
+
+logger = logging.getLogger(__name__)
 
 
 def _date_key(dt: datetime) -> str:
@@ -58,7 +61,7 @@ class ReminderEngine(QThread):
     def set_time_offset(self, offset_seconds: float) -> None:
         """设置网络时间偏移量（秒）"""
         self._time_offset = offset_seconds
-        print(f"[Engine] 时间偏移量已设置: {offset_seconds:.1f}秒")
+        logger.info(f"时间偏移量已设置: {offset_seconds:.1f}秒")
 
     def get_effective_now(self) -> datetime:
         """获取考虑了网络时间偏移的当前时间"""
@@ -70,16 +73,16 @@ class ReminderEngine(QThread):
     def register_handler(self, action_type: str, handler: Callable) -> None:
         """注册动作处理器"""
         self._handlers[action_type] = handler
-        print(f"[Engine] 注册动作处理器: {action_type}")
+        logger.info(f"注册动作处理器: {action_type}")
 
     def load_reminders(self) -> None:
         """从配置加载提醒"""
         self._reminders = self.config.get("reminders", [])
         enabled = [r for r in self._reminders if r.get("enabled", False)]
-        print(f"[Engine] 加载了 {len(enabled)} 个启用的提醒")
+        logger.info(f"加载了 {len(enabled)} 个启用的提醒")
         for r in enabled:
             weekdays = "仅工作日" if r.get("weekdays_only", False) else "每天"
-            print(f"  - {r['name']}: {r['time']} ({r.get('action_type', 'unknown')}) [{weekdays}]")
+            logger.info(f"  - {r['name']}: {r['time']} ({r.get('action_type', 'unknown')}) [{weekdays}]")
 
     def reload_reminders(self, new_config: Dict[str, Any]) -> None:
         """外部调用：重新加载配置（管理面板修改后）"""
@@ -95,7 +98,7 @@ class ReminderEngine(QThread):
             try:
                 self._check_reminders()
             except Exception as e:
-                print(f"[Engine] 检查提醒时出错: {e}")
+                logger.error(f"检查提醒时出错: {e}")
             time.sleep(1)  # 精度1秒
 
     def stop(self) -> None:
@@ -110,7 +113,7 @@ class ReminderEngine(QThread):
 
         # 跨天检测：日期变化时清空已触发记录和临时状态
         if self._last_check_date is not None and today_key != self._last_check_date:
-            print(f"[Engine] 日期变更: {self._last_check_date} -> {today_key}，重置触发记录")
+            logger.info(f"日期变更: {self._last_check_date} -> {today_key}，重置触发记录")
             self._triggered_today.clear()
             self._snooze_mgr.reset_daily()
         self._last_check_date = today_key
@@ -142,7 +145,7 @@ class ReminderEngine(QThread):
                 # 已到贪睡时间，触发并清除贪睡状态
                 if self._snooze_mgr.should_trigger_snooze(reminder_name):
                     self._snooze_mgr.clear_snooze(reminder_name)
-                    print(f"[Engine] 贪睡提醒触发: {reminder_name}")
+                    logger.info(f"贪睡提醒触发: {reminder_name}")
                     self._trigger_reminder(reminder)
                 continue
 
@@ -150,7 +153,7 @@ class ReminderEngine(QThread):
             try:
                 h, m = map(int, reminder_time.split(":"))
             except ValueError:
-                print(f"[Engine] 无效的时间格式: {reminder_time}")
+                logger.warning(f"无效的时间格式: {reminder_time}")
                 continue
 
             current_time_key = f"{today_key}_{reminder_time}"
@@ -158,7 +161,7 @@ class ReminderEngine(QThread):
             # 检查是否已到时间且今天未触发
             if now.hour == h and now.minute == m and current_time_key not in self._triggered_today:
                 self._triggered_today.add(current_time_key)
-                print(f"[Engine] 触发提醒: {reminder_name}")
+                logger.info(f"触发提醒: {reminder_name}")
                 self._trigger_reminder(reminder)
 
     def _trigger_reminder(self, reminder: Dict[str, Any]) -> None:
@@ -176,9 +179,9 @@ class ReminderEngine(QThread):
             try:
                 handler(reminder)
             except Exception as e:
-                print(f"[Engine] 执行动作 {action_type} 失败: {e}")
+                logger.error(f"执行动作 {action_type} 失败: {e}")
         else:
-            print(f"[Engine] 未找到动作处理器: {action_type}")
+            logger.warning(f"未找到动作处理器: {action_type}")
 
     # --- 二期：交互处理方法（由主线程通过槽函数调用）---
     def handle_snooze(self, reminder_name: str, minutes: int) -> None:

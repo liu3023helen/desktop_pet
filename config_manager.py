@@ -3,10 +3,13 @@
 支持热重载：配置文件修改后自动重新加载
 所有数据存储在 exe 同级 data/ 目录下，完全便携不写 C 盘
 """
+import logging
 import sys
 import yaml
 from pathlib import Path
 from typing import Dict, Any, Optional
+
+logger = logging.getLogger(__name__)
 
 
 def get_exe_dir() -> Path:
@@ -50,7 +53,7 @@ class ConfigManager:
                 config = yaml.safe_load(f) or {}
             return self._merge_defaults(config)
         except Exception as e:
-            print(f"[Config] 加载配置失败: {e}，使用默认配置")
+            logger.error(f"加载配置失败: {e}，使用默认配置")
             return self._default_config()
 
     def _merge_defaults(self, config: Dict[str, Any]) -> Dict[str, Any]:
@@ -76,10 +79,10 @@ class ConfigManager:
             with open(temp_path, "w", encoding="utf-8") as f:
                 yaml.dump(config, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
             temp_path.replace(self.config_path)
-            print(f"[Config] 配置已保存: {self.config_path}")
+            logger.info(f"配置已保存: {self.config_path}")
             return True
         except Exception as e:
-            print(f"[Config] 保存配置失败: {e}")
+            logger.error(f"保存配置失败: {e}")
             try:
                 temp_path.unlink(missing_ok=True)
             except:

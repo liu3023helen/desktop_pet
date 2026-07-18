@@ -46,19 +46,19 @@ def open_dingtalk_checkin(reminder_config: Dict[str, Any]) -> bool:
 
     # 安全校验：URL 白名单
     if not _is_safe_url(target_url):
-        print(f"[DingTalk] URL 未通过白名单校验: {target_url}")
+        logger.warning(f"URL 未通过白名单校验: {target_url}")
         return False
 
     # 方案1: 使用 os.startfile 启动关联程序（无 shell 注入风险）
     try:
-        print(f"[DingTalk] 尝试启动钉钉客户端: {target_url}")
+        logger.info(f"尝试启动钉钉客户端: {target_url}")
         os.startfile(target_url)
-        print("[DingTalk] 钉钉客户端启动成功")
+        logger.info("钉钉客户端启动成功")
         return True
     except OSError as e:
-        print(f"[DingTalk] 钉钉客户端启动失败: {e}")
+        logger.error(f"钉钉客户端启动失败: {e}")
     except Exception as e:
-        print(f"[DingTalk] 启动钉钉客户端异常: {e}")
+        logger.error(f"启动钉钉客户端异常: {e}")
 
     # 方案2: 降级到浏览器打开网页版
     return open_browser_checkin(reminder_config)
@@ -80,7 +80,7 @@ def open_browser_checkin(reminder_config: Dict[str, Any]) -> bool:
         if not web_url.startswith("http"):
             web_url = DEFAULT_DINGTALK_URL
             
-        print(f"[DingTalk] 降级打开浏览器: {web_url}")
+        logger.info(f"降级打开浏览器: {web_url}")
         webbrowser.open(web_url)
         return True
     except Exception as e:

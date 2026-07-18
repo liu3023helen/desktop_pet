@@ -1,5 +1,5 @@
 # 电子宠物提醒配置
-# 路径：%APPDATA%\DesktopPet\config.yaml
+# 路径：exe同级 data/config.yaml
 # 首次运行时自动从模板释放
 
 pet:
@@ -11,6 +11,7 @@ reminders:
   - name: "下班打卡"
     enabled: true
     time: "18:30"
+    weekdays_only: false        # 仅工作日触发（二期）
     action_type: "open_url"
     action_target: "dingtalk://dingtalkclient/page/link?pc_slide=false&url=https://im.dingtalk.com/attendancemobile/index.html"
     animation: "cheer"
@@ -18,10 +19,25 @@ reminders:
     sound: true
 
   # --- 扩展示例（取消注释即可启用）---
-  # - name: "运动提醒"
+  # - name: "晨间提醒"
   #   enabled: false
-  #   time: "20:00"
-  #   action_type: "play_animation"
-  #   animation: "walk"
-  #   message: "该起来动一动了！"
+  #   time: "09:00"
+  #   weekdays_only: true
+  #   action_type: "notify_only"
+  #   animation: "cheer"
+  #   message: "早上好！开始工作吧~"
   #   sound: true
+
+# --- 网络时间校准（二期）---
+time_sync:
+  enabled: true
+  ntp_server: "ntp.aliyun.com"     # 阿里云NTP
+  tolerance_seconds: 30            # 偏差告警阈值
+
+# --- 天气信息（二期）---
+weather:
+  enabled: false
+  city: "北京"
+  api_provider: "qweather"         # qweather / openweathermap
+  api_key: ""                      # 和风天气API Key（需自行申请）
+  update_interval_minutes: 60

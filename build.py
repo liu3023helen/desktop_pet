@@ -41,6 +41,12 @@ cmd = [
     "--collect-all=PyQt5",         # 包含PyQt5全部资源
     "--hidden-import=yaml",
     "--hidden-import=PyYAML",
+    "--hidden-import=reminder_engine",
+    "--hidden-import=reminder_dialog",
+    "--hidden-import=snooze_handler",
+    "--hidden-import=workday_utils",
+    "--hidden-import=time_sync",
+    "--hidden-import=weather_service",
     "--clean",                      # 清理临时缓存
     str(MAIN),
 ]

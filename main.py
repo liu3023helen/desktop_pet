@@ -73,16 +73,22 @@ def set_auto_start(enabled: bool) -> bool:
 
 
 # --- 音效播放 ---
-SOUND_FILE = "assets/sounds/reminder.wav"
+DEFAULT_SOUND_FILE = "assets/sounds/reminder.wav"
 
 
-def play_reminder_sound():
-    """播放提醒提示音"""
+def play_reminder_sound(sound_file: str = None):
+    """播放提醒提示音
+
+    Args:
+        sound_file: 相对路径的音频文件（WAV格式），如 "assets/sounds/xxx.wav"。
+                    为空则使用默认提示音。
+    """
     try:
-        sound_path = os.path.join(os.path.dirname(__file__), SOUND_FILE)
+        file_to_play = sound_file if sound_file else DEFAULT_SOUND_FILE
+        sound_path = os.path.join(os.path.dirname(__file__), file_to_play)
         if getattr(sys, 'frozen', False):
             # 打包后从临时目录读取
-            sound_path = os.path.join(sys._MEIPASS, SOUND_FILE)
+            sound_path = os.path.join(sys._MEIPASS, file_to_play)
         if os.path.exists(sound_path):
             winsound.PlaySound(sound_path, winsound.SND_FILENAME | winsound.SND_ASYNC)
             logger.debug(f"播放提示音: {sound_path}")
@@ -570,9 +576,10 @@ class PetWindow(QWidget):
         else:
             self.animation_player.play("cheer", fps=3, loop=True)
 
-        # 4. 播放提示音
+        # 4. 播放提示音（支持每个提醒使用不同的音效文件）
         if sound_enabled:
-            play_reminder_sound()
+            sound_file = reminder.get("sound_file", "")
+            play_reminder_sound(sound_file if sound_file else None)
 
         # 5. 漫画气泡展示提醒文案（同时保留托盘通知作为辅助）
         self.bubble.show_bubble(message, duration_ms=8000)

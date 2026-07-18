@@ -2,6 +2,7 @@
 闹钟管理GUI面板 - 表格化增删改查提醒任务
 替代手动编辑YAML配置文件
 """
+import os
 from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,
     QPushButton, QHeaderView, QMessageBox, QFormLayout, QLineEdit,
@@ -10,6 +11,15 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtCore import Qt, QTime, pyqtSignal
 from PyQt5.QtGui import QFont
+
+
+def _scan_sound_files() -> list:
+    """扫描 assets/sounds 目录下的 WAV 文件，返回文件名列表"""
+    sounds_dir = os.path.join(os.path.dirname(__file__), "assets", "sounds")
+    if not os.path.isdir(sounds_dir):
+        return []
+    files = sorted([f for f in os.listdir(sounds_dir) if f.lower().endswith(".wav")])
+    return files
 
 
 class ReminderFormDialog(QDialog):
@@ -24,7 +34,7 @@ class ReminderFormDialog(QDialog):
     def _setup_ui(self):
         is_edit = self._reminder_data is not None
         self.setWindowTitle("编辑提醒" if is_edit else "新增提醒")
-        self.setFixedSize(400, 520)
+        self.setFixedSize(420, 580)
         self.setModal(True)
 
         layout = QVBoxLayout(self)
@@ -77,6 +87,16 @@ class ReminderFormDialog(QDialog):
         self._sound_check = QCheckBox("播放提示音")
         self._sound_check.setChecked(True)
         form_layout.addRow(self._sound_check)
+
+        # 音效文件选择
+        self._sound_file_combo = QComboBox()
+        self._sound_file_combo.setEditable(False)
+        self._sound_file_combo.addItem("使用默认提示音", "")
+        sound_files = _scan_sound_files()
+        for sf in sound_files:
+            self._sound_file_combo.addItem(sf, sf)
+        self._sound_file_combo.setToolTip("选择此提醒专用的音效文件，留空则使用默认提示音")
+        form_layout.addRow("专属音效", self._sound_file_combo)
 
         layout.addWidget(form_widget)
 
@@ -140,6 +160,13 @@ class ReminderFormDialog(QDialog):
         self._message_edit.setText(r.get("message", ""))
         self._sound_check.setChecked(r.get("sound", True))
 
+        # 音效文件选择
+        sound_file = r.get("sound_file", "")
+        if sound_file:
+            idx = self._sound_file_combo.findData(sound_file)
+            if idx >= 0:
+                self._sound_file_combo.setCurrentIndex(idx)
+
     def _on_ok(self):
         """确定按钮处理"""
         name = self._name_edit.text().strip()
@@ -152,6 +179,8 @@ class ReminderFormDialog(QDialog):
         action_types = ["open_url", "play_animation", "notify_only"]
         action_idx = self._action_combo.currentIndex()
 
+        sound_file = self._sound_file_combo.currentData() or ""
+
         self._result = {
             "name": name,
             "enabled": True,
@@ -162,6 +191,7 @@ class ReminderFormDialog(QDialog):
             "animation": self._anim_combo.currentText(),
             "message": self._message_edit.toPlainText().strip(),
             "sound": self._sound_check.isChecked(),
+            "sound_file": sound_file,
         }
         self.accept()
 

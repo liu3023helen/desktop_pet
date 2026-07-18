@@ -1,7 +1,7 @@
 """
-Desktop Pet - 桌面电子宠物 MVP
+Desktop Pet - 桌面电子宠物 v2
 主入口：初始化应用、加载配置、启动提醒引擎和宠物窗口
-支持：安静模式/开机自启/音效/多显示器适配
+支持：安静模式/开机自启/音效/多显示器适配/闹钟管理/网络时间校准/天气信息
 """
 import sys
 import os
@@ -11,7 +11,10 @@ import winreg
 import winsound
 from pathlib import Path
 
-from PyQt5.QtWidgets import QApplication, QSystemTrayIcon, QMenu, QAction, QLabel, QWidget, QVBoxLayout
+from PyQt5.QtWidgets import (
+    QApplication, QSystemTrayIcon, QMenu, QAction, QLabel, QWidget,
+    QVBoxLayout, QMessageBox
+)
 from PyQt5.QtCore import Qt, QPoint, QTimer, pyqtSignal
 from PyQt5.QtGui import QPixmap, QIcon
 
@@ -252,6 +255,11 @@ class PetWindow(QWidget):
         self.wander_timer.timeout.connect(self._wander_step)
         # 安静模式：不启动闲逛
 
+        # 配置管理器引用（由外部设置）
+        self._config_mgr = None
+        # 提醒引擎引用（由外部设置）
+        self._engine = None
+
         # 系统托盘
         self._setup_tray()
 
@@ -332,6 +340,21 @@ class PetWindow(QWidget):
         self._autostart_action.triggered.connect(self._toggle_autostart)
         tray_menu.addAction(self._autostart_action)
 
+        # --- 二期新增菜单项 ---
+        tray_menu.addSeparator()
+
+        manage_action = QAction("管理提醒", self)
+        manage_action.triggered.connect(self._open_reminder_dialog)
+        tray_menu.addAction(manage_action)
+
+        sync_time_action = QAction("校准网络时间", self)
+        sync_time_action.triggered.connect(self._sync_time_now)
+        tray_menu.addAction(sync_time_action)
+
+        weather_action = QAction("查看天气", self)
+        weather_action.triggered.connect(self._show_weather)
+        tray_menu.addAction(weather_action)
+
         tray_menu.addSeparator()
 
         quit_action = QAction("退出", self)
@@ -369,6 +392,98 @@ class PetWindow(QWidget):
         self.wander_timer.stop()
         self.tray_icon.hide()
         QApplication.quit()
+
+    # --- 二期新增方法 ---
+    def _open_reminder_dialog(self):
+        """打开闹钟管理面板"""
+        if self._config_mgr is None:
+            QMessageBox.warning(self, "配置未初始化", "配置管理器尚未初始化")
+            return
+        try:
+            from reminder_dialog import ReminderDialog
+            dialog = ReminderDialog(self._config_mgr, self)
+            # 连接信号：当提醒更新时，通知引擎重新加载
+            dialog.reminders_updated.connect(self._on_reminders_updated)
+            dialog.exec_()
+        except Exception as e:
+            logger.error(f"打开提醒管理面板失败: {e}")
+            QMessageBox.critical(self, "错误", f"无法打开管理面板: {e}")
+
+    def _on_reminders_updated(self, new_config):
+        """提醒列表已更新，通知引擎重新加载"""
+        if self._engine is not None:
+            self._engine.reload_reminders(new_config)
+            self.tray_icon.showMessage("提醒已更新", "新的提醒设置已生效", QSystemTrayIcon.Information, 2000)
+            logger.info("提醒引擎已重新加载配置")
+
+    def _sync_time_now(self):
+        """手动触发网络时间校准"""
+        try:
+            from time_sync import TimeSyncService
+            self.tray_icon.showMessage("时间校准中", "正在获取网络时间...", QSystemTrayIcon.Information, 2000)
+
+            def do_sync():
+                service = TimeSyncService()
+                offset = service.sync_once()
+                if offset is not None:
+                    if self._engine is not None:
+                        self._engine.set_time_offset(offset)
+                    abs_offset = abs(offset)
+                    if abs_offset > 30:
+                        msg = f"时间偏差较大：{offset:.1f}秒，已自动校准"
+                    else:
+                        msg = f"时间已校准，偏差：{offset:.1f}秒"
+                    # 使用QTimer回到主线程显示通知
+                    QTimer.singleShot(100, lambda m=msg: self.tray_icon.showMessage(
+                        "时间校准完成", m, QSystemTrayIcon.Information, 4000
+                    ))
+                else:
+                    QTimer.singleShot(100, lambda: self.tray_icon.showMessage(
+                        "时间校准失败", "无法连接到时间服务器", QSystemTrayIcon.Warning, 4000
+                    ))
+
+            # 在后台线程执行NTP请求
+            import threading
+            threading.Thread(target=do_sync, daemon=True).start()
+        except ImportError:
+            QMessageBox.warning(self, "功能未就绪", "时间校准模块尚未集成")
+        except Exception as e:
+            logger.error(f"时间校准失败: {e}")
+            self.tray_icon.showMessage("时间校准失败", str(e), QSystemTrayIcon.Warning, 4000)
+
+    def _show_weather(self):
+        """显示天气信息"""
+        try:
+            from weather_service import WeatherService
+            config = self._config_mgr.load() if self._config_mgr else {}
+            weather_cfg = config.get("weather", {})
+            city = weather_cfg.get("city", "北京")
+
+            self.tray_icon.showMessage("天气查询中", f"正在获取 {city} 的天气信息...", QSystemTrayIcon.Information, 2000)
+
+            def do_fetch():
+                service = WeatherService(config=weather_cfg)
+                info = service.get_weather(city)
+                if info:
+                    msg = f"{info.city} {info.condition} {info.temperature}°C"
+                    if info.humidity:
+                        msg += f" 湿度{info.humidity}%"
+                    QTimer.singleShot(100, lambda m=msg: self.tray_icon.showMessage(
+                        "天气信息", m, QSystemTrayIcon.Information, 5000
+                    ))
+                else:
+                    QTimer.singleShot(100, lambda: self.tray_icon.showMessage(
+                        "天气查询失败", "无法获取天气信息，请检查网络和API配置",
+                        QSystemTrayIcon.Warning, 4000
+                    ))
+
+            import threading
+            threading.Thread(target=do_fetch, daemon=True).start()
+        except ImportError:
+            QMessageBox.warning(self, "功能未就绪", "天气模块尚未集成")
+        except Exception as e:
+            logger.error(f"天气查询失败: {e}")
+            self.tray_icon.showMessage("天气查询失败", str(e), QSystemTrayIcon.Warning, 4000)
 
     def _wander_step(self):
         """闲逛步进逻辑"""
@@ -519,8 +634,30 @@ def main():
     # 连接信号到主线程的提醒处理
     engine.reminder_triggered.connect(pet_window.trigger_reminder)
     
+    # --- 二期：设置双向引用 ---
+    pet_window._config_mgr = config_mgr
+    pet_window._engine = engine
+    
     engine.start()
     logger.info("提醒引擎已启动")
+
+    # --- 二期：自动执行网络时间校准（后台）---
+    try:
+        from time_sync import TimeSyncService
+        time_sync_cfg = config.get("time_sync", {})
+        if time_sync_cfg.get("enabled", True):
+            def auto_sync():
+                service = TimeSyncService(server=time_sync_cfg.get("ntp_server", "ntp.aliyun.com"))
+                offset = service.sync_once()
+                if offset is not None:
+                    engine.set_time_offset(offset)
+                    tolerance = time_sync_cfg.get("tolerance_seconds", 30)
+                    if abs(offset) > tolerance:
+                        logger.warning(f"本地时间偏差过大: {offset:.1f}秒")
+            import threading
+            threading.Thread(target=auto_sync, daemon=True).start()
+    except ImportError:
+        logger.debug("时间同步模块未就绪，跳过自动校准")
 
     # 4. 显示宠物窗口
     pet_window.show()

@@ -448,14 +448,20 @@ class PetWindow(QWidget):
                         msg = f"时间偏差较大：{offset:.1f}秒，已自动校准"
                     else:
                         msg = f"时间已校准，偏差：{offset:.1f}秒"
-                    # 使用QTimer回到主线程显示通知
-                    QTimer.singleShot(100, lambda m=msg: self.tray_icon.showMessage(
-                        "时间校准完成", m, QSystemTrayIcon.Information, 4000
-                    ))
+                    title = "时间校准完成"
+                    # 使用 QMetaObject.invokeMethod 回到主线程显示通知
+                    QMetaObject.invokeMethod(
+                        self.tray_icon, "showMessage", Qt.QueuedConnection,
+                        Q_ARG(str, title), Q_ARG(str, msg),
+                        Q_ARG(int, QSystemTrayIcon.Information), Q_ARG(int, 4000)
+                    )
                 else:
-                    QTimer.singleShot(100, lambda: self.tray_icon.showMessage(
-                        "时间校准失败", "无法连接到时间服务器", QSystemTrayIcon.Warning, 4000
-                    ))
+                    QMetaObject.invokeMethod(
+                        self.tray_icon, "showMessage", Qt.QueuedConnection,
+                        Q_ARG(str, "时间校准失败"),
+                        Q_ARG(str, "无法连接到时间服务器"),
+                        Q_ARG(int, QSystemTrayIcon.Warning), Q_ARG(int, 4000)
+                    )
 
             # 在后台线程执行NTP请求
             import threading

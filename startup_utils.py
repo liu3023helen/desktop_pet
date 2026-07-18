@@ -163,9 +163,18 @@ def play_reminder_sound(sound_file: str = None):
     Args:
         sound_file: 相对路径的音频文件（WAV格式），如 "assets/sounds/xxx.wav"。
                     为空则使用默认提示音。
+                    兼容旧格式：仅有文件名（如 "xxx.wav"）会自动补全路径。
     """
     try:
-        file_to_play = sound_file if sound_file else DEFAULT_SOUND_FILE
+        if not sound_file:
+            file_to_play = DEFAULT_SOUND_FILE
+        elif os.sep in sound_file or "/" in sound_file:
+            # 已包含路径分隔符，直接使用
+            file_to_play = sound_file
+        else:
+            # 旧格式：仅有文件名，自动补全 assets/sounds/ 前缀
+            file_to_play = os.path.join("assets", "sounds", sound_file)
+        
         if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
             sound_path = Path(sys._MEIPASS) / file_to_play
         else:

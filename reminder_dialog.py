@@ -14,11 +14,12 @@ from PyQt5.QtGui import QFont
 
 
 def _scan_sound_files() -> list:
-    """扫描 assets/sounds 目录下的 WAV 文件，返回文件名列表（排除默认提示音 reminder.wav）"""
+    """扫描 assets/sounds 目录下的 WAV 文件，返回相对路径列表（排除默认提示音 reminder.wav）"""
     sounds_dir = os.path.join(os.path.dirname(__file__), "assets", "sounds")
     if not os.path.isdir(sounds_dir):
         return []
-    files = sorted([f for f in os.listdir(sounds_dir)
+    files = sorted([os.path.join("assets", "sounds", f)
+                    for f in os.listdir(sounds_dir)
                     if f.lower().endswith(".wav") and f.lower() != "reminder.wav"])
     return files
 
@@ -106,7 +107,9 @@ class ReminderFormDialog(QDialog):
         self._sound_file_combo.addItem("使用默认提示音", "")
         sound_files = _scan_sound_files()
         for sf in sound_files:
-            self._sound_file_combo.addItem(sf, sf)
+            # 显示文件名，存储完整相对路径
+            display_name = os.path.basename(sf)
+            self._sound_file_combo.addItem(display_name, sf)
         self._sound_file_combo.setToolTip("选择此提醒专用的音效文件，留空则使用默认提示音")
         form_layout.addRow("专属音效", self._sound_file_combo)
 
@@ -174,10 +177,13 @@ class ReminderFormDialog(QDialog):
         self._message_edit.setText(r.get("message", ""))
         self._sound_check.setChecked(r.get("sound", True))
 
-        # 音效文件选择
+        # 音效文件选择（兼容旧配置仅有文件名的格式）
         sound_file = r.get("sound_file", "")
         if sound_file:
             idx = self._sound_file_combo.findData(sound_file)
+            if idx < 0 and os.sep not in sound_file and "/" not in sound_file:
+                # 旧格式：尝试补全路径后查找
+                idx = self._sound_file_combo.findData(os.path.join("assets", "sounds", sound_file))
             if idx >= 0:
                 self._sound_file_combo.setCurrentIndex(idx)
 

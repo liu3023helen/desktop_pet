@@ -196,7 +196,7 @@ def _check_assets(pet_window) -> None:
         msg = (
             f"素材不完整，宠物可能无法正常显示。\n\n"
             f"{''.join(issues)}\n\n"
-            f"请运行 'python generate_assets.py' 生成占位素材。"
+            f"请检查 assets/animations/ 目录下是否有对应的 PNG 序列帧文件。"
         )
         logger.warning(msg)
         # 使用 QTimer 延迟弹窗，避免在构造期间阻塞

@@ -22,6 +22,15 @@ def _scan_sound_files() -> list:
     return files
 
 
+def _scan_animation_dirs() -> list:
+    """扫描 assets/animations 目录下的动画子目录，返回目录名列表"""
+    anim_dir = os.path.join(os.path.dirname(__file__), "assets", "animations")
+    if not os.path.isdir(anim_dir):
+        return []
+    dirs = sorted([d for d in os.listdir(anim_dir) if os.path.isdir(os.path.join(anim_dir, d))])
+    return dirs
+
+
 class ReminderFormDialog(QDialog):
     """新增/编辑提醒的表单弹窗"""
 
@@ -74,7 +83,9 @@ class ReminderFormDialog(QDialog):
 
         # 专属动画
         self._anim_combo = QComboBox()
-        self._anim_combo.addItems(["cheer", "run", "stretch"])
+        anim_dirs = _scan_animation_dirs()
+        if anim_dirs:
+            self._anim_combo.addItems(anim_dirs)
         form_layout.addRow("专属动画", self._anim_combo)
 
         # 提醒文案

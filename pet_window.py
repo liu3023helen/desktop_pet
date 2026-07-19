@@ -541,10 +541,11 @@ class PetWindow(QWidget):
         return snooze_until <= now
 
     def _process_pending_reminders(self) -> None:
+        now = self._now_provider()
+        self._prune_expired_pending_records(now)
         if self._active_record is not None or self._session_locked:
             return
 
-        now = self._now_provider()
         record = next(
             (
                 item for item in self._pending_records
@@ -565,6 +566,35 @@ class PetWindow(QWidget):
         except Exception as error:
             logger.error(f"更新待处理提醒状态失败: {error}")
         self._display_active_reminder()
+
+    def _prune_expired_pending_records(self, now: datetime) -> None:
+        cutoff = now - self._pending_store.retention
+        active_record_id = (
+            self._active_record.get("record_id")
+            if self._active_record is not None
+            else None
+        )
+        retained = []
+        for record in self._pending_records:
+            if record.get("record_id") == active_record_id:
+                retained.append(record)
+                continue
+            try:
+                triggered_at = datetime.fromisoformat(record["triggered_at"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            if triggered_at >= cutoff:
+                retained.append(record)
+
+        if len(retained) == len(self._pending_records):
+            return
+        expired_count = len(self._pending_records) - len(retained)
+        self._pending_records = retained
+        try:
+            self._pending_store.save(retained)
+        except Exception as error:
+            logger.error(f"清理过期待处理提醒失败: {error}")
+        logger.info(f"已清理 {expired_count} 条超过保留期限的待处理提醒")
 
     def _display_active_reminder(self, play_sound: bool = True) -> None:
         if self._session_locked:

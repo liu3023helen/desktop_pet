@@ -313,6 +313,28 @@ class PetWindowModeTests(unittest.TestCase):
         self.assertEqual(stored[0]["triggered_at"], "2026-07-20T09:30:00")
         self.assertNotIn("_triggered_at", stored[0]["reminder"])
 
+    def test_locked_pending_reminder_expires_from_memory_after_24_hours(self):
+        self.window.set_session_locked(True)
+        self.window.trigger_reminder({
+            "id": "expires",
+            "name": "Expires",
+            "message": "Too old",
+            "action_type": "notify_only",
+            "sound": False,
+        })
+        self.assertEqual(len(self.window._pending_records), 1)
+
+        self.now += timedelta(hours=24, seconds=1)
+        self.window._process_pending_reminders()
+
+        self.assertEqual(self.window._pending_records, [])
+        self.assertEqual(self.store.load(now=self.now), [])
+
+        self.window.set_session_locked(False)
+
+        self.assertIsNone(self.window._active_record)
+        self.assertEqual(self.window.bubble.mode, "hidden")
+
     def test_utility_result_waits_until_active_reminder_is_closed(self):
         self.window.trigger_reminder({
             "id": "priority",

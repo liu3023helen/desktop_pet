@@ -5,6 +5,7 @@
 import logging
 import os
 import shutil
+import subprocess
 import sys
 import winreg
 import winsound
@@ -20,6 +21,18 @@ from utils import get_app_dir, get_exe_path
 # --- 开机自启管理 ---
 APP_NAME = "DesktopPet"
 REG_PATH = r"Software\Microsoft\Windows\CurrentVersion\Run"
+
+
+def get_autostart_command() -> str:
+    """Build a quoted Windows command for frozen and development modes."""
+    app_path = get_exe_path()
+    if getattr(sys, "frozen", False):
+        return subprocess.list2cmdline([app_path])
+
+    interpreter = Path(sys.executable)
+    pythonw = interpreter.with_name("pythonw.exe")
+    launcher = pythonw if pythonw.exists() else interpreter
+    return subprocess.list2cmdline([str(launcher), app_path])
 
 
 def is_auto_start_enabled() -> bool:
@@ -59,7 +72,8 @@ def cleanup_stale_autostart() -> bool:
         return True
     
     current_path = get_exe_path()
-    if registered_path == current_path:
+    current_command = get_autostart_command()
+    if registered_path in {current_path, current_command}:
         return True
     
     if os.path.exists(registered_path):
@@ -87,8 +101,9 @@ def set_auto_start(enabled: bool) -> bool:
                 winreg.DeleteValue(key, APP_NAME)
             except FileNotFoundError:
                 pass
-            winreg.SetValueEx(key, APP_NAME, 0, winreg.REG_SZ, get_exe_path())
-            logging.getLogger(__name__).info(f"开机自启已启用: {get_exe_path()}")
+            command = get_autostart_command()
+            winreg.SetValueEx(key, APP_NAME, 0, winreg.REG_SZ, command)
+            logging.getLogger(__name__).info(f"开机自启已启用: {command}")
         else:
             try:
                 winreg.DeleteValue(key, APP_NAME)

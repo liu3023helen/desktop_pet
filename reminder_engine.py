@@ -7,11 +7,9 @@ import logging
 import threading
 import time
 from datetime import datetime, timedelta
-from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
-from PyQt5.QtCore import QObject, pyqtSignal, QThread
-from PyQt5.QtWidgets import QMessageBox
+from PyQt5.QtCore import pyqtSignal, QThread
 
 from snooze_handler import SnoozeManager
 from workday_utils import is_workday_from_datetime
@@ -22,6 +20,30 @@ logger = logging.getLogger(__name__)
 def _date_key(dt: datetime) -> str:
     """返回日期字符串 YYYY-MM-DD"""
     return dt.strftime("%Y-%m-%d")
+
+
+def _validate_reminder(reminder: Any) -> Optional[str]:
+    """Return a validation error, or None when a reminder is schedulable."""
+    if not isinstance(reminder, dict):
+        return "提醒项必须是对象"
+
+    name = reminder.get("name")
+    if not isinstance(name, str) or not name.strip():
+        return "提醒名称不能为空"
+
+    reminder_time = reminder.get("time")
+    if not isinstance(reminder_time, str):
+        return "提醒时间必须是 HH:MM 字符串"
+
+    try:
+        parsed = datetime.strptime(reminder_time, "%H:%M")
+    except ValueError:
+        return "提醒时间必须是有效的 HH:MM"
+
+    if parsed.strftime("%H:%M") != reminder_time:
+        return "提醒时间必须使用两位 HH:MM 格式"
+
+    return None
 
 
 class ReminderEngine(QThread):
@@ -79,7 +101,19 @@ class ReminderEngine(QThread):
 
     def load_reminders(self) -> None:
         """从配置加载提醒"""
-        self._reminders = self.config.get("reminders", [])
+        configured = self.config.get("reminders", [])
+        if not isinstance(configured, list):
+            logger.error("reminders 配置必须是列表，已忽略全部提醒")
+            configured = []
+
+        self._reminders = []
+        for index, reminder in enumerate(configured):
+            error = _validate_reminder(reminder)
+            if error:
+                logger.error(f"忽略无效提醒 #{index + 1}: {error}")
+                continue
+            self._reminders.append(reminder)
+
         enabled = [r for r in self._reminders if r.get("enabled", False)]
         logger.info(f"加载了 {len(enabled)} 个启用的提醒")
         for r in enabled:
@@ -155,8 +189,9 @@ class ReminderEngine(QThread):
 
             # 解析时间 HH:MM
             try:
-                h, m = map(int, reminder_time.split(":"))
-            except ValueError:
+                parsed_time = datetime.strptime(reminder_time, "%H:%M")
+                h, m = parsed_time.hour, parsed_time.minute
+            except (TypeError, ValueError):
                 logger.warning(f"无效的时间格式: {reminder_time}")
                 continue
 

@@ -102,7 +102,10 @@ class PetWindow(QWidget):
         # 安静模式：不启动闲逛
 
         # 漫画对话气泡（闹钟/天气文字展示）
-        self.bubble = BubbleWidget(pet_window=self)
+        self.bubble = BubbleWidget(
+            pet_window=self,
+            max_width=ui_cfg.get("bubble_max_width", 300),
+        )
 
         # 配置管理器引用（由外部设置）
         self._config_mgr = None

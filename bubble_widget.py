@@ -13,10 +13,11 @@ logger = logging.getLogger("DesktopPet.bubble")
 class BubbleWidget(QLabel):
     """漫画风格对话气泡 — 独立顶级窗口"""
 
-    def __init__(self, pet_window=None):
+    def __init__(self, pet_window=None, max_width: int = 300):
         super().__init__(None)
         
         self._pet_window = pet_window
+        self._max_width = max(160, int(max_width))
 
         # 关键设置：无边框 + 置顶
         self.setWindowFlags(
@@ -45,7 +46,8 @@ class BubbleWidget(QLabel):
         font = QFont("Microsoft YaHei", 14, QFont.Bold)
         self.setFont(font)
 
-        self.setFixedSize(280, 70)
+        self.setMinimumWidth(min(180, self._max_width))
+        self.setMaximumWidth(self._max_width)
 
         # 自动消失定时器
         self._hide_timer = QTimer(self)
@@ -65,13 +67,16 @@ class BubbleWidget(QLabel):
 
         self._hide_timer.stop()
         self.setText(text)
-        self.adjustSize()
-        logger.info(f"[BubbleWidget] after adjustSize: {self.width()}x{self.height()}")
+        self.setMinimumSize(0, 0)
+        self.setMaximumSize(self._max_width, 16777215)
 
-        max_w = 300
-        if self.width() > max_w:
-            self.setFixedWidth(max_w)
-            self.adjustSize()
+        horizontal_padding = 36
+        longest_line = max(text.splitlines() or [text], key=len)
+        natural_width = self.fontMetrics().horizontalAdvance(longest_line) + horizontal_padding
+        width = max(160, min(self._max_width, natural_width))
+        self.setFixedWidth(width)
+        self.setFixedHeight(max(70, self.heightForWidth(width)))
+        logger.info(f"[BubbleWidget] fitted size: {self.width()}x{self.height()}")
 
         self._reposition()
         logger.info(f"[BubbleWidget] position: {self.pos()}")

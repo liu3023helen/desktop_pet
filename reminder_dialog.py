@@ -148,6 +148,8 @@ class ReminderFormDialog(QDialog):
         # 填充已有数据
         if is_edit:
             self._populate_form()
+        else:
+            self._action_combo.setCurrentIndex(1)
 
     def _on_action_type_changed(self, index):
         """根据动作类型显示/隐藏URL输入框"""

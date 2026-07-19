@@ -21,8 +21,8 @@ class ReminderFormTests(unittest.TestCase):
     def test_action_switch_hides_only_url_label(self):
         self.dialog = ReminderFormDialog()
 
-        self.dialog._action_combo.setCurrentIndex(1)
-
+        self.assertEqual(self.dialog._action_combo.currentIndex(), 1)
+        self.assertEqual(self.dialog._action_combo.currentText(), "播放动画")
         self.assertTrue(self.dialog._url_label.isHidden())
         name_label = next(
             label for label in self.dialog.findChildren(type(self.dialog._url_label))
@@ -49,6 +49,7 @@ class ReminderFormTests(unittest.TestCase):
     def test_open_url_requires_a_target(self):
         self.dialog = ReminderFormDialog()
         self.dialog._name_edit.setText("Open link")
+        self.dialog._action_combo.setCurrentIndex(0)
         self.dialog._url_edit.clear()
 
         with patch("reminder_dialog.QMessageBox.warning") as warning:
@@ -56,6 +57,17 @@ class ReminderFormTests(unittest.TestCase):
 
         warning.assert_called_once()
         self.assertEqual(self.dialog.get_result(), {})
+
+    def test_new_reminder_saves_play_animation_by_default(self):
+        self.dialog = ReminderFormDialog()
+        self.dialog._name_edit.setText("Animated reminder")
+
+        self.dialog._on_ok()
+
+        self.assertEqual(
+            self.dialog.get_result()["action_type"],
+            "play_animation",
+        )
 
 
 if __name__ == "__main__":

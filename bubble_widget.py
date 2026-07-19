@@ -86,14 +86,14 @@ class BubbleWidget(QWidget):
         self._snooze_button = QPushButton("稍后10分钟哈~", self._actions_widget)
         self._snooze_button.setObjectName("bubble_snooze_button")
         self._snooze_button.clicked.connect(
-            lambda: self.action_triggered.emit(self.ACTION_SNOOZE)
+            lambda: self._emit_action(self.ACTION_SNOOZE)
         )
         actions_layout.addWidget(self._snooze_button)
 
         self._acknowledge_button = QPushButton("知道了~", self._actions_widget)
         self._acknowledge_button.setObjectName("bubble_acknowledge_button")
         self._acknowledge_button.clicked.connect(
-            lambda: self.action_triggered.emit(self.ACTION_ACKNOWLEDGE)
+            lambda: self._emit_action(self.ACTION_ACKNOWLEDGE)
         )
         actions_layout.addWidget(self._acknowledge_button)
         layout.addWidget(self._actions_widget)
@@ -134,6 +134,7 @@ class BubbleWidget(QWidget):
             return
 
         self._hide_timer.stop()
+        self.setAttribute(Qt.WA_ShowWithoutActivating, not actions)
         self._mode = mode
         self._message_label.setText(text)
         self._actions_widget.setVisible(actions)
@@ -144,6 +145,10 @@ class BubbleWidget(QWidget):
 
         if duration_ms is not None and duration_ms > 0:
             self._hide_timer.start(int(duration_ms))
+
+    def _emit_action(self, action: str) -> None:
+        logger.info(f"[BubbleWidget] action clicked: {action}")
+        self.action_triggered.emit(action)
 
     def _fit_to_content(self, text: str, actions: bool) -> None:
         self.setMinimumSize(0, 0)

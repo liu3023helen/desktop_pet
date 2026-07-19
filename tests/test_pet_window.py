@@ -7,6 +7,8 @@ from unittest.mock import Mock, patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from PyQt5.QtCore import Qt
+from PyQt5.QtTest import QTest
 from PyQt5.QtWidgets import QApplication
 
 from pending_reminder_store import PendingReminderStore
@@ -142,6 +144,31 @@ class PetWindowModeTests(unittest.TestCase):
         self.assertTrue(self.window._quiet_mode)
         self.assertFalse(self.window.animation_player.is_playing())
         self.assertEqual(self.window.bubble.mode, "hidden")
+
+    def test_real_button_mouse_click_runs_snooze_end_to_end(self):
+        self.window.trigger_reminder({
+            "id": "mouse-click",
+            "name": "Mouse click",
+            "message": "Click me",
+            "action_type": "play_animation",
+            "animation": "cheer",
+            "sound": False,
+        })
+        self.app.processEvents()
+
+        QTest.mouseClick(
+            self.window.bubble._snooze_button,
+            Qt.LeftButton,
+        )
+        self.app.processEvents()
+
+        self.assertEqual(self.window.bubble.mode, "hidden")
+        self.assertIsNone(self.window._active_record)
+        self.assertTrue(self.window._quiet_mode)
+        self.assertEqual(
+            self.store.load(now=self.now)[0]["status"],
+            "snoozed",
+        )
 
     def test_window_is_clamped_to_available_screen(self):
         screen = QApplication.primaryScreen().availableGeometry()

@@ -637,13 +637,17 @@ class PetWindow(QWidget):
 
     def _handle_bubble_action(self, action: str) -> None:
         if self._active_reminder is None or self._active_record is None:
+            logger.warning(f"忽略气泡操作，无活跃提醒: {action}")
             return
 
         if action not in {
             BubbleWidget.ACTION_SNOOZE,
             BubbleWidget.ACTION_ACKNOWLEDGE,
         }:
+            logger.warning(f"忽略未知气泡操作: {action}")
             return
+
+        logger.info(f"处理提醒气泡操作: {action}")
 
         reminder_key = self._active_reminder.get(
             "_runtime_id",

@@ -3,6 +3,7 @@ import unittest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import QApplication, QPushButton
 
 from bubble_widget import BubbleWidget
@@ -85,6 +86,13 @@ class BubbleSizingTests(unittest.TestCase):
         self.bubble.findChild(QPushButton, "bubble_acknowledge_button").click()
 
         self.assertEqual(emitted, ["snooze_10", "acknowledge"])
+
+    def test_only_interactive_reminder_mode_can_activate(self):
+        self.bubble.show_result("状态结果")
+        self.assertTrue(self.bubble.testAttribute(Qt.WA_ShowWithoutActivating))
+
+        self.bubble.show_reminder("需要操作")
+        self.assertFalse(self.bubble.testAttribute(Qt.WA_ShowWithoutActivating))
 
     def test_switching_from_reminder_to_result_hides_actions(self):
         self.bubble.show_reminder("提醒")

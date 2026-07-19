@@ -52,6 +52,12 @@ def main():
 
     # 2. 创建宠物窗口
     pet_window = PetWindow(config=config)
+    if config_mgr.last_load_error:
+        if config_mgr.recovered_from_backup:
+            message = "主配置损坏，已自动使用最近备份。"
+        else:
+            message = "配置无法读取且没有可用备份，当前使用默认设置。"
+        pet_window.tray_icon.showMessage("配置恢复", message)
 
     # 2b. 检查素材完整性
     from startup_utils import check_assets

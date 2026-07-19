@@ -43,5 +43,35 @@ class ConfigDefaultsTests(unittest.TestCase):
         self.assertIn("check_interval_sec", config["engine"])
 
 
+class ConfigRecoveryTests(unittest.TestCase):
+    def test_corrupt_primary_config_recovers_from_backup(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "config.yaml"
+            manager = ConfigManager(str(config_path))
+            expected = {"pet": {"name": "Recoverable"}, "reminders": []}
+            self.assertTrue(manager.save(expected))
+            self.assertTrue(manager.backup_path.exists())
+            config_path.write_text("pet: [broken", encoding="utf-8")
+
+            config = manager.load()
+
+        self.assertEqual(config["pet"]["name"], "Recoverable")
+        self.assertTrue(manager.recovered_from_backup)
+        self.assertIsNotNone(manager.last_load_error)
+
+    def test_corrupt_config_without_backup_uses_complete_defaults(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "config.yaml"
+            config_path.write_text("pet: [broken", encoding="utf-8")
+            manager = ConfigManager(str(config_path))
+
+            config = manager.load()
+
+        self.assertFalse(manager.recovered_from_backup)
+        self.assertIsNotNone(manager.last_load_error)
+        self.assertIn("ui", config)
+        self.assertIn("engine", config)
+
+
 if __name__ == "__main__":
     unittest.main()

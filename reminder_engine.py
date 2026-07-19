@@ -46,6 +46,18 @@ def _validate_reminder(reminder: Any) -> Optional[str]:
     return None
 
 
+def _reminder_identity(reminder: Dict[str, Any], index: int) -> str:
+    """Return a per-reminder identity while remaining compatible with old config."""
+    configured_id = reminder.get("id")
+    if isinstance(configured_id, str) and configured_id.strip():
+        return configured_id.strip()
+    return f"legacy:{index}:{reminder.get('name', '')}"
+
+
+def _trigger_key(reminder: Dict[str, Any], index: int, today_key: str) -> str:
+    return f"{today_key}_{reminder.get('time', '')}_{_reminder_identity(reminder, index)}"
+
+
 class ReminderEngine(QThread):
     """提醒引擎 - 在独立线程中运行定时调度"""
 
@@ -155,7 +167,7 @@ class ReminderEngine(QThread):
                 self._snooze_mgr.reset_daily(now)
             self._last_check_date = today_key
 
-        for reminder in self._reminders:
+        for reminder_index, reminder in enumerate(self._reminders):
             if not reminder.get("enabled", False):
                 continue
 
@@ -195,7 +207,7 @@ class ReminderEngine(QThread):
                 logger.warning(f"无效的时间格式: {reminder_time}")
                 continue
 
-            current_time_key = f"{today_key}_{reminder_time}"
+            current_time_key = _trigger_key(reminder, reminder_index, today_key)
 
             # 检查是否已到时间且今天未触发
             # 休眠唤醒容错：检查当前时间及过去 60 秒内是否有未触发的提醒
@@ -241,11 +253,11 @@ class ReminderEngine(QThread):
             # 标记为已触发，避免原时间点再次触发
             now = self.get_effective_now()
             today_key = _date_key(now)
-            for r in self._reminders:
+            for index, r in enumerate(self._reminders):
                 if r.get("name") == reminder_name and r.get("enabled"):
                     time_str = r.get("time", "")
                     if time_str:
-                        self._triggered_today.add(f"{today_key}_{time_str}")
+                        self._triggered_today.add(_trigger_key(r, index, today_key))
                     break
 
     def handle_skip_today(self, reminder_name: str) -> None:
@@ -254,11 +266,11 @@ class ReminderEngine(QThread):
             self._snooze_mgr.skip_today(reminder_name)
             now = self.get_effective_now()
             today_key = _date_key(now)
-            for r in self._reminders:
+            for index, r in enumerate(self._reminders):
                 if r.get("name") == reminder_name and r.get("enabled"):
                     time_str = r.get("time", "")
                     if time_str:
-                        self._triggered_today.add(f"{today_key}_{time_str}")
+                        self._triggered_today.add(_trigger_key(r, index, today_key))
                     break
 
     def handle_complete(self, reminder_name: str) -> None:

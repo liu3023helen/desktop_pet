@@ -48,5 +48,38 @@ class ReminderLoadingTests(unittest.TestCase):
         self.assertEqual(fired, ["valid"])
 
 
+class ReminderDeduplicationTests(unittest.TestCase):
+    def test_reminders_sharing_a_minute_trigger_independently(self):
+        engine = ReminderEngine({
+            "reminders": [
+                make_reminder(name="first"),
+                make_reminder(name="second"),
+            ]
+        })
+        engine.load_reminders()
+        engine.get_effective_now = lambda: datetime(2026, 7, 20, 9, 30, 15)
+        fired = []
+        engine._trigger_reminder = lambda reminder: fired.append(reminder["name"])
+
+        engine._check_reminders()
+        engine._check_reminders()
+
+        self.assertEqual(fired, ["first", "second"])
+        self.assertEqual(len(engine._triggered_today), 2)
+
+    def test_identical_legacy_reminders_use_their_position_as_fallback(self):
+        first = make_reminder(name="duplicate")
+        second = make_reminder(name="duplicate")
+        engine = ReminderEngine({"reminders": [first, second]})
+        engine.load_reminders()
+        engine.get_effective_now = lambda: datetime(2026, 7, 20, 9, 30, 15)
+        fired = []
+        engine._trigger_reminder = lambda reminder: fired.append(reminder)
+
+        engine._check_reminders()
+
+        self.assertEqual(fired, [first, second])
+
+
 if __name__ == "__main__":
     unittest.main()

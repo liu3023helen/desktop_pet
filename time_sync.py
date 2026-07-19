@@ -5,6 +5,7 @@
 import socket
 import struct
 import time
+import math
 from datetime import datetime
 from typing import Optional
 
@@ -24,14 +25,28 @@ NTP_PORT = 123
 NTP_TIMEOUT = 5  # 秒
 # NTP epoch offset: seconds between 1900-01-01 and 1970-01-01
 NTP_EPOCH_OFFSET = 2208988800
+MAX_ABS_OFFSET_SECONDS = 86400
+
+
+def _pack_ntp_timestamp(unix_time: float) -> bytes:
+    ntp_time = unix_time + NTP_EPOCH_OFFSET
+    seconds = int(ntp_time)
+    fraction = int((ntp_time - seconds) * (2 ** 32))
+    return struct.pack("!II", seconds, fraction)
+
+
+def _unpack_ntp_timestamp(raw: bytes) -> float:
+    seconds, fraction = struct.unpack("!II", raw)
+    return seconds + fraction / (2 ** 32) - NTP_EPOCH_OFFSET
 
 
 class TimeSyncService:
     """NTP时间同步服务"""
 
     def __init__(self, server: str = None):
-        self._server = server or DEFAULT_NTP_SERVERS[0]
-        self._servers = [server] if server else DEFAULT_NTP_SERVERS
+        self._servers = list(DEFAULT_NTP_SERVERS)
+        if server:
+            self._servers = [server] + [item for item in self._servers if item != server]
         self._last_offset: Optional[float] = None
         self._last_sync_time: Optional[datetime] = None
 
@@ -40,42 +55,61 @@ class TimeSyncService:
         发送NTP请求并计算时间偏移量
         返回: ntp_time - local_time （秒），None表示失败
         """
+        client = None
         try:
             client = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             client.settimeout(NTP_TIMEOUT)
 
-            # 构建NTP请求包（48字节，版本3，模式3=客户端）
-            ntp_packet = b'\x1b' + b'\x00' * 47
-
             # 记录发送时间
             send_time = time.time()
+            ntp_packet = bytearray(48)
+            ntp_packet[0] = 0x23  # LI=0, version=4, mode=3 (client)
+            ntp_packet[40:48] = _pack_ntp_timestamp(send_time)
 
-            client.sendto(ntp_packet, (host, NTP_PORT))
-            response, _ = client.recvfrom(256)
+            # Connected UDP only accepts responses from the selected endpoint.
+            client.connect((host, NTP_PORT))
+            client.send(bytes(ntp_packet))
+            response = client.recv(256)
 
             # 记录接收时间
             recv_time = time.time()
-
-            client.close()
 
             if len(response) < 48:
                 logger.warning(f"NTP响应过短: {len(response)} 字节")
                 return None
 
-            # 解析服务器发送时间戳（第32-39字节，transmit timestamp）
-            transmit_timestamp = struct.unpack("!Q", response[40:48])[0]
-            transmit_timestamp /= 2**32  # 转换为浮点秒数
-            transmit_timestamp -= NTP_EPOCH_OFFSET  # 转换为Unix时间戳
+            leap = response[0] >> 6
+            version = (response[0] >> 3) & 0x07
+            mode = response[0] & 0x07
+            stratum = response[1]
+            if leap == 3 or version < 3 or mode != 4 or not 1 <= stratum <= 15:
+                logger.warning(
+                    f"NTP响应状态无效: leap={leap}, version={version}, "
+                    f"mode={mode}, stratum={stratum}"
+                )
+                return None
 
-            # 计算偏移量
-            # offset = ((t2 - t1) + (t3 - t4)) / 2
-            # t1 = send_time (客户端发送), t2 = 服务器收到(未知)
-            # t3 = transmit_timestamp (服务器发送), t4 = recv_time (客户端收到)
-            # 简化: offset ≈ t3 - (t1 + t4) / 2
-            local_avg = (send_time + recv_time) / 2
-            offset = transmit_timestamp - local_avg
+            if response[24:32] != bytes(ntp_packet[40:48]):
+                logger.warning("NTP响应未匹配当前请求")
+                return None
 
-            round_trip = recv_time - send_time
+            receive_timestamp = _unpack_ntp_timestamp(response[32:40])
+            transmit_timestamp = _unpack_ntp_timestamp(response[40:48])
+            if transmit_timestamp <= 0:
+                logger.warning("NTP响应缺少有效发送时间戳")
+                return None
+
+            offset = (
+                (receive_timestamp - send_time)
+                + (transmit_timestamp - recv_time)
+            ) / 2
+            if not math.isfinite(offset) or abs(offset) > MAX_ABS_OFFSET_SECONDS:
+                logger.warning(f"NTP偏移超出安全范围: {offset}")
+                return None
+
+            round_trip = (recv_time - send_time) - (
+                transmit_timestamp - receive_timestamp
+            )
             logger.info(f"NTP [{host}]: 偏移={offset:.3f}s, RTT={round_trip:.3f}s")
 
             return offset
@@ -86,6 +120,9 @@ class TimeSyncService:
             logger.warning(f"NTP域名解析失败: {host}, {e}")
         except Exception as e:
             logger.warning(f"NTP查询异常: {host}, {e}")
+        finally:
+            if client is not None:
+                client.close()
 
         return None
 

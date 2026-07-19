@@ -40,3 +40,4 @@ data/
 # Test artifacts
 test_output.txt
 test_error.txt
+build_output.txt

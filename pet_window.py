@@ -4,7 +4,7 @@
 """
 import logging
 import sys
-import weakref
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from PyQt5.QtWidgets import (
@@ -16,22 +16,28 @@ from PyQt5.QtGui import QPixmap, QIcon
 
 from animation_player import AnimationPlayer
 from bubble_widget import BubbleWidget
+from pending_reminder_store import PendingReminderStore
 from startup_utils import is_auto_start_enabled, set_auto_start, play_reminder_sound
 
 logger = logging.getLogger(__name__)
 
-# 宠物闲逛时底部预留像素（为任务栏留出空间，避免被遮挡）
-TASKBAR_RESERVE_PX = 50
+def _available_geometry_for(window: QWidget):
+    screen = QApplication.screenAt(window.frameGeometry().center())
+    if screen is None:
+        screen = QApplication.primaryScreen()
+    return screen.availableGeometry()
 
 
-def clamp_to_primary_screen(window: QWidget) -> None:
-    """确保窗口在主显示器范围内，防止跑到副屏消失"""
-    screen = QApplication.primaryScreen().geometry()
+def clamp_to_available_screen(window: QWidget) -> None:
+    """Keep a window inside the usable area of its nearest screen."""
+    screen = _available_geometry_for(window)
     pos = window.pos()
     size = window.size()
 
-    new_x = max(screen.left(), min(pos.x(), screen.right() - size.width()))
-    new_y = max(screen.top(), min(pos.y(), screen.bottom() - size.height()))
+    max_x = screen.right() - size.width() + 1
+    max_y = screen.bottom() - size.height() + 1
+    new_x = max(screen.left(), min(pos.x(), max_x))
+    new_y = max(screen.top(), min(pos.y(), max_y))
 
     if pos.x() != new_x or pos.y() != new_y:
         window.move(new_x, new_y)
@@ -41,16 +47,24 @@ def clamp_to_primary_screen(window: QWidget) -> None:
 class PetWindow(QWidget):
     """透明宠物窗口 - 支持安静模式"""
 
-    def __init__(self, config: dict = None):
+    def __init__(
+        self,
+        config: dict = None,
+        pending_store: PendingReminderStore = None,
+        now_provider=None,
+    ):
         super().__init__()
         self.config = config or {}
+        nested_pet_cfg = self.config.get("pet")
+        self._pet_config = nested_pet_cfg if isinstance(nested_pet_cfg, dict) else self.config
+        self._default_animation = self._pet_config.get("default_animation", "cheer")
         logger.info("初始化宠物窗口（安静模式）")
 
         # 窗口属性（从配置读取，兼容旧版无配置项）
         ui_cfg = self.config.get("ui", {}) if isinstance(self.config.get("ui"), dict) else {}
         window_size = ui_cfg.get("window_size", 256)
 
-        self.setWindowTitle(self.config.get("name", "Pet"))
+        self.setWindowTitle(self._pet_config.get("name", "Pet"))
         self.setFixedSize(window_size, window_size)
 
         # 无边框 + 透明 + 置顶 + 工具窗口（不在任务栏显示）
@@ -84,8 +98,13 @@ class PetWindow(QWidget):
         self.animation_player = AnimationPlayer()
         self.animation_player.bind(self.animation_label)
 
-        # 预加载 cheer 动画（2帧，低帧率让每帧停留更久）
-        self.animation_player.load_animation("cheer", fps=3)
+        # 预加载默认动画（低帧率让每帧停留更久）
+        if not self.animation_player.load_animation(self._default_animation, fps=3):
+            logger.warning(
+                f"默认动画不存在: {self._default_animation}，回退到 cheer"
+            )
+            self._default_animation = "cheer"
+            self.animation_player.load_animation(self._default_animation, fps=3)
 
         # 安静模式：只显示静态图片，不播放动画
         self._show_static_frame()
@@ -100,33 +119,61 @@ class PetWindow(QWidget):
         # 安静模式：不启动闲逛
 
         # 漫画对话气泡（闹钟/天气文字展示）
-        self.bubble = BubbleWidget(pet_window=self)
+        self.bubble = BubbleWidget(
+            pet_window=self,
+            max_width=ui_cfg.get("bubble_max_width", 300),
+        )
+        self.bubble.action_triggered.connect(self._handle_bubble_action)
 
         # 配置管理器引用（由外部设置）
         self._config_mgr = None
         # 提醒引擎引用（由外部设置）
         self._engine = None
+        self._now_provider = now_provider or datetime.now
+        self._pending_store = (
+            pending_store if pending_store is not None else PendingReminderStore()
+        )
+        try:
+            self._pending_records = self._pending_store.load(
+                now=self._now_provider()
+            )
+        except Exception as error:
+            logger.error(f"加载待处理提醒失败: {error}")
+            self._pending_records = []
+        self._active_record = None
+        self._active_reminder = None
+        self._deferred_bubble = None
+        self._session_locked = False
+        self.pending_reminder_timer = QTimer(self)
+        self.pending_reminder_timer.setInterval(1000)
+        self.pending_reminder_timer.timeout.connect(
+            self._process_pending_reminders
+        )
+        self.pending_reminder_timer.start()
+        self._weather_service = None
+        self._weather_service_config = None
+        self._diagnostics_thread = None
 
         # 系统托盘
         self._setup_tray()
+        self._process_pending_reminders()
 
         logger.info("宠物窗口初始化完成（安静模式，右下角静止）")
 
     def _move_to_corner(self):
-        """移动到屏幕右下角（安静模式位置），确保在主屏范围内"""
-        screen = QApplication.primaryScreen().geometry()
-        x = screen.width() - self.width() - 20   # 距右边20px
-        y = screen.height() - self.height() - 60  # 距底部60px（避开任务栏）
+        """Move to the bottom-right of the current screen's usable area."""
+        screen = _available_geometry_for(self)
+        x = screen.right() - self.width() + 1 - 20
+        y = screen.bottom() - self.height() + 1 - 20
         self.move(x, y)
-        # 多显示器适配：确保窗口不会跑到副屏
-        clamp_to_primary_screen(self)
+        clamp_to_available_screen(self)
         logger.debug(f"宠物移至右下角: ({x}, {y})")
 
     def _show_static_frame(self):
-        """显示静态图片（cheer第一帧），不播放动画"""
-        if not self.animation_player.is_animation_loaded("cheer"):
-            self.animation_player.load_animation("cheer", fps=3)
-        pixmap = self.animation_player.get_frame("cheer", 0)
+        """显示默认动画第一帧，不播放动画"""
+        if not self.animation_player.is_animation_loaded(self._default_animation):
+            self.animation_player.load_animation(self._default_animation, fps=3)
+        pixmap = self.animation_player.get_frame(self._default_animation, 0)
         if pixmap:
             # 只显示第一帧，不启动定时器
             self.animation_label.setPixmap(pixmap)
@@ -199,9 +246,16 @@ class PetWindow(QWidget):
         sync_time_action.triggered.connect(self._sync_time_now)
         tray_menu.addAction(sync_time_action)
 
-        weather_action = QAction("查看天气", self)
-        weather_action.triggered.connect(self._show_weather)
-        tray_menu.addAction(weather_action)
+        self._weather_action = QAction("查看天气", self)
+        weather_cfg = self.config.get("weather", {})
+        weather_enabled = weather_cfg.get("enabled", True) if isinstance(weather_cfg, dict) else True
+        self._weather_action.setEnabled(weather_enabled)
+        self._weather_action.triggered.connect(self._show_weather)
+        tray_menu.addAction(self._weather_action)
+
+        diagnostics_action = QAction("运行自检", self)
+        diagnostics_action.triggered.connect(self._run_diagnostics)
+        tray_menu.addAction(diagnostics_action)
 
         tray_menu.addSeparator()
 
@@ -220,7 +274,6 @@ class PetWindow(QWidget):
 
     def _toggle_quiet_mode(self, checked):
         """切换安静模式"""
-        self._quiet_mode = checked
         self._quiet_action.setChecked(checked)
         if checked:
             self._enter_quiet_mode()
@@ -241,6 +294,15 @@ class PetWindow(QWidget):
         self.tray_icon.hide()
         QApplication.quit()
 
+    @pyqtSlot()
+    def activate_from_launch(self) -> None:
+        """Bring the existing instance forward after a repeated launch."""
+        self.show()
+        self.raise_()
+        if self.bubble.isVisible():
+            self.bubble.raise_()
+        logger.info("已有宠物窗口已响应重复启动请求")
+
     # --- 二期新增方法 ---
     def _open_reminder_dialog(self):
         """打开闹钟管理面板"""
@@ -259,6 +321,10 @@ class PetWindow(QWidget):
 
     def _on_reminders_updated(self, new_config):
         """提醒列表已更新，通知引擎重新加载"""
+        self.config = new_config
+        weather_cfg = new_config.get("weather", {})
+        if isinstance(weather_cfg, dict):
+            self._weather_action.setEnabled(weather_cfg.get("enabled", True))
         if self._engine is not None:
             self._engine.reload_reminders(new_config)
             self.tray_icon.showMessage("提醒已更新", "新的提醒设置已生效", QSystemTrayIcon.Information, 2000)
@@ -268,42 +334,45 @@ class PetWindow(QWidget):
         """手动触发网络时间校准"""
         try:
             from time_sync import TimeSyncService
-            self.tray_icon.showMessage("时间校准中", "正在获取网络时间...", QSystemTrayIcon.Information, 2000)
+            config = self._config_mgr.load() if self._config_mgr else self.config
+            time_sync_cfg = config.get("time_sync", {})
+            server = time_sync_cfg.get("ntp_server", "ntp.aliyun.com")
+            tolerance = time_sync_cfg.get("tolerance_seconds", 30)
+            self._show_loading_bubble("正在校准网络时间...")
 
             def do_sync():
-                service = TimeSyncService()
+                service = TimeSyncService(server=server)
                 offset = service.sync_once()
                 if offset is not None:
                     if self._engine is not None:
                         self._engine.set_time_offset(offset)
                     abs_offset = abs(offset)
-                    if abs_offset > 30:
+                    if abs_offset > tolerance:
                         msg = f"时间偏差较大：{offset:.1f}秒，已自动校准"
                     else:
                         msg = f"时间已校准，偏差：{offset:.1f}秒"
-                    title = "时间校准完成"
-                    # 使用 QMetaObject.invokeMethod 回到主线程显示通知
                     QMetaObject.invokeMethod(
-                        self.tray_icon, "showMessage", Qt.QueuedConnection,
-                        Q_ARG(str, title), Q_ARG(str, msg),
-                        Q_ARG(int, QSystemTrayIcon.Information), Q_ARG(int, 4000)
+                        self, "_show_status_result", Qt.QueuedConnection,
+                        Q_ARG(str, msg)
                     )
                 else:
                     QMetaObject.invokeMethod(
-                        self.tray_icon, "showMessage", Qt.QueuedConnection,
-                        Q_ARG(str, "时间校准失败"),
-                        Q_ARG(str, "无法连接到时间服务器"),
-                        Q_ARG(int, QSystemTrayIcon.Warning), Q_ARG(int, 4000)
+                        self, "_show_status_result", Qt.QueuedConnection,
+                        Q_ARG(str, "时间校准失败，无法连接到时间服务器")
                     )
 
             # 在后台线程执行NTP请求
             import threading
             threading.Thread(target=do_sync, daemon=True).start()
         except ImportError:
-            QMessageBox.warning(self, "功能未就绪", "时间校准模块尚未集成")
+            self._show_result_bubble("时间校准功能尚未就绪")
         except Exception as e:
             logger.error(f"时间校准失败: {e}")
-            self.tray_icon.showMessage("时间校准失败", str(e), QSystemTrayIcon.Warning, 4000)
+            self._show_result_bubble(f"时间校准失败：{e}")
+
+    @pyqtSlot(str)
+    def _show_status_result(self, message: str):
+        self._show_result_bubble(message)
 
     def _show_weather(self):
         """显示天气信息（漫画气泡 + 托盘通知）"""
@@ -312,22 +381,27 @@ class PetWindow(QWidget):
             from weather_service import WeatherService
             config = self._config_mgr.load() if self._config_mgr else {}
             weather_cfg = config.get("weather", {})
+            if not weather_cfg.get("enabled", True):
+                self._show_result_bubble("天气查询已在配置中禁用")
+                return
             city = weather_cfg.get("city", "北京")
 
             logger.info(f"[Weather] config loaded: city={city}, weather_cfg={weather_cfg}")
             logger.info(f"[Weather] bubble instance: {self.bubble}")
 
-            self.tray_icon.showMessage("天气查询中", f"正在获取 {city} 的天气信息...", QSystemTrayIcon.Information, 1500)
+            self._show_loading_bubble(f"正在获取 {city} 的天气...")
 
             def do_fetch():
                 logger.info("[Weather] do_fetch started in thread")
                 try:
-                    service = WeatherService(config=weather_cfg)
-                    info = service.get_weather(city)
+                    if self._weather_service is None or self._weather_service_config != weather_cfg:
+                        self._weather_service = WeatherService(config=weather_cfg)
+                        self._weather_service_config = dict(weather_cfg)
+                    info = self._weather_service.get_weather(city)
                     logger.info(f"[Weather] get_weather result: {info}")
                     if info:
                         msg = f"{info.city} · {info.condition} · {info.temperature}°C"
-                        if info.humidity:
+                        if info.humidity is not None:
                             msg += f"\n湿度 {info.humidity}%"
                         logger.info(f"[Weather] formatted msg: {msg!r}")
                     else:
@@ -350,31 +424,73 @@ class PetWindow(QWidget):
             import threading
             threading.Thread(target=do_fetch, daemon=True).start()
         except ImportError:
-            QMessageBox.warning(self, "功能未就绪", "天气模块尚未集成")
+            self._show_result_bubble("天气查询功能尚未就绪")
         except Exception as e:
             logger.error(f"天气查询失败: {e}")
-            weather_dur = self.config.get("ui", {}).get("weather_bubble_duration_ms", 6000)
-            self.bubble.show_bubble("天气查询失败", duration_ms=weather_dur)
+            self._show_result_bubble("天气查询失败")
+
+    def _run_diagnostics(self):
+        """Run system diagnostics without blocking the UI thread."""
+        if self._diagnostics_thread is not None and self._diagnostics_thread.is_alive():
+            self._show_loading_bubble("正在运行自检...")
+            return
+
+        from diagnostics import run_diagnostics_async
+
+        self._show_loading_bubble("正在运行自检...")
+
+        def show_result(title, success, lines):
+            summary = "\n".join(lines[:3]) if lines else "未返回诊断详情"
+            self._show_result_bubble(f"{title}\n{summary}")
+
+        self._diagnostics_thread = run_diagnostics_async(
+            self._config_mgr,
+            show_result,
+        )
 
     @pyqtSlot(str)
     def _show_weather_bubble(self, msg: str):
         """在主线程显示天气气泡"""
         logger.info(f"[Weather] _show_weather_bubble: msg={msg!r}")
         logger.info(f"[Weather] bubble before show: visible={self.bubble.isVisible()}")
-        weather_dur = self.config.get("ui", {}).get("weather_bubble_duration_ms", 6000)
-        self.bubble.show_bubble(msg, duration_ms=weather_dur)
+        self._show_result_bubble(msg)
         logger.info(f"[Weather] bubble after show: visible={self.bubble.isVisible()}")
-        self.tray_icon.showMessage("天气信息", msg.replace("\n", " "), QSystemTrayIcon.Information, 5000)
+
+    def _show_loading_bubble(self, message: str) -> None:
+        if self._active_record is not None or self._session_locked:
+            self._deferred_bubble = ("loading", message)
+            return
+        self.bubble.show_loading(message)
+
+    def _show_result_bubble(self, message: str) -> None:
+        if self._active_record is not None or self._session_locked:
+            self._deferred_bubble = ("result", message)
+            return
+        self.bubble.show_result(message)
+
+    def _show_deferred_bubble(self) -> None:
+        if (
+            self._active_record is not None
+            or self._session_locked
+            or self._deferred_bubble is None
+        ):
+            return
+        mode, message = self._deferred_bubble
+        self._deferred_bubble = None
+        if mode == "loading":
+            self.bubble.show_loading(message)
+        else:
+            self.bubble.show_result(message)
 
     def _wander_step(self):
         """闲逛步进逻辑 — 限制在屏幕中央区域活动"""
-        screen = QApplication.primaryScreen().geometry()
+        screen = _available_geometry_for(self)
         new_x = self.x() + self._velocity.x()
         new_y = self.y() + self._velocity.y()
 
         # 限制X轴活动范围：屏幕中央的 wander_x_range_ratio 宽度
         range_w = int(screen.width() * self._wander_x_range_ratio)
-        center_x = screen.width() // 2
+        center_x = screen.left() + screen.width() // 2
         x_min = center_x - range_w // 2
         x_max = center_x + range_w // 2 - self.width()
 
@@ -383,58 +499,219 @@ class PetWindow(QWidget):
             new_x = max(x_min, min(new_x, x_max))
 
         # 限制Y轴范围（底部预留任务栏空间）
-        if new_y < 0:
-            new_y = 0
+        if new_y < screen.top():
+            new_y = screen.top()
             self._velocity.setY(abs(self._velocity.y()))
-        elif new_y + self.height() > screen.height() - TASKBAR_RESERVE_PX:
-            new_y = screen.height() - TASKBAR_RESERVE_PX - self.height()
+        elif new_y + self.height() > screen.bottom() + 1:
+            new_y = screen.bottom() + 1 - self.height()
             self._velocity.setY(-abs(self._velocity.y()))
 
         self.move(new_x, new_y)
 
     def trigger_reminder(self, reminder: dict) -> None:
-        """
-        触发提醒回调（由提醒引擎信号连接到主线程调用）
-        提醒时：跳到屏幕中央 + 进入活跃模式 + 播放动画 + 提示音 + 气泡文字
-        10秒后：恢复右下角安静模式
-        """
+        """Persist a reminder and enqueue it for FIFO presentation."""
+        payload = dict(reminder)
+        triggered_at_value = payload.pop("_triggered_at", None)
+        payload.setdefault("name", "提醒")
+        payload.setdefault("message", f"{payload['name']}时间到了！")
+        now = self._now_provider()
+        triggered_at = now
+        if isinstance(triggered_at_value, str):
+            try:
+                triggered_at = datetime.fromisoformat(triggered_at_value)
+            except ValueError:
+                logger.warning(
+                    f"忽略无效提醒触发时间: {triggered_at_value!r}"
+                )
+        try:
+            record = self._pending_store.create_record(payload, triggered_at)
+        except (TypeError, ValueError) as error:
+            logger.error(f"无法创建待处理提醒: {error}")
+            return
+
+        self._pending_records.append(record)
+        self._pending_records.sort(key=lambda item: item["triggered_at"])
+        try:
+            self._pending_store.append(record, now=now)
+        except Exception as error:
+            logger.error(f"保存待处理提醒失败，将仅保留在内存中: {error}")
+        self._process_pending_reminders()
+
+    @staticmethod
+    def _is_record_ready(record: dict, now: datetime) -> bool:
+        if record.get("status") in {"pending", "active"}:
+            return True
+        if record.get("status") != "snoozed":
+            return False
+        try:
+            snooze_until = datetime.fromisoformat(record["snooze_until"])
+        except (KeyError, TypeError, ValueError):
+            return False
+        return snooze_until <= now
+
+    def _process_pending_reminders(self) -> None:
+        now = self._now_provider()
+        self._prune_expired_pending_records(now)
+        if self._active_record is not None or self._session_locked:
+            return
+
+        record = next(
+            (
+                item for item in self._pending_records
+                if self._is_record_ready(item, now)
+            ),
+            None,
+        )
+        if record is None:
+            self._show_deferred_bubble()
+            return
+
+        record["status"] = "active"
+        record["snooze_until"] = None
+        self._active_record = record
+        self._active_reminder = dict(record["reminder"])
+        try:
+            self._pending_store.replace(record, now=now)
+        except Exception as error:
+            logger.error(f"更新待处理提醒状态失败: {error}")
+        self._display_active_reminder()
+
+    def _prune_expired_pending_records(self, now: datetime) -> None:
+        cutoff = now - self._pending_store.retention
+        active_record_id = (
+            self._active_record.get("record_id")
+            if self._active_record is not None
+            else None
+        )
+        retained = []
+        for record in self._pending_records:
+            if record.get("record_id") == active_record_id:
+                retained.append(record)
+                continue
+            try:
+                triggered_at = datetime.fromisoformat(record["triggered_at"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            if triggered_at >= cutoff:
+                retained.append(record)
+
+        if len(retained) == len(self._pending_records):
+            return
+        expired_count = len(self._pending_records) - len(retained)
+        self._pending_records = retained
+        try:
+            self._pending_store.save(retained)
+        except Exception as error:
+            logger.error(f"清理过期待处理提醒失败: {error}")
+        logger.info(f"已清理 {expired_count} 条超过保留期限的待处理提醒")
+
+    def _display_active_reminder(self, play_sound: bool = True) -> None:
+        if self._session_locked:
+            return
+        reminder = self._active_reminder
+        if reminder is None:
+            return
         name = reminder.get("name", "提醒")
         message = reminder.get("message", f"{name}时间到了！")
         animation = reminder.get("animation", "cheer")
         sound_enabled = reminder.get("sound", True)
+        action_type = reminder.get("action_type", "notify_only")
+        play_animation = action_type in {"open_url", "play_animation"}
 
         logger.info(f"触发提醒: {name}, 消息: {message}")
 
-        # 1. 进入活跃模式（开始闲逛）
-        self._enter_active_mode()
+        if play_animation:
+            # 1. 进入活跃模式（开始闲逛）
+            self._enter_active_mode()
 
-        # 2. 移动到屏幕正中央
-        screen = QApplication.primaryScreen().geometry()
-        center_x = screen.width() // 2 - self.width() // 2
-        center_y = screen.height() // 2 - self.height() // 2
-        self.move(center_x, center_y)
+            # 2. 移动到屏幕正中央
+            screen = _available_geometry_for(self)
+            center_x = screen.left() + (screen.width() - self.width()) // 2
+            center_y = screen.top() + (screen.height() - self.height()) // 2
+            self.move(center_x, center_y)
 
-        # 3. 切换动画
-        if self.animation_player.is_animation_loaded(animation) or self.animation_player.load_animation(animation):
-            self.animation_player.play(animation, fps=3, loop=True)
-        else:
-            self.animation_player.play("cheer", fps=3, loop=True)
+            # 3. 切换动画
+            if self.animation_player.is_animation_loaded(animation) or self.animation_player.load_animation(animation):
+                self.animation_player.play(animation, fps=3, loop=True)
+            else:
+                self.animation_player.play(self._default_animation, fps=3, loop=True)
 
         # 4. 播放提示音（支持每个提醒使用不同的音效文件）
-        if sound_enabled:
+        if sound_enabled and play_sound:
             sound_file = reminder.get("sound_file", "")
             play_reminder_sound(sound_file if sound_file else None)
 
-        # 5. 漫画气泡展示提醒文案（同时保留托盘通知作为辅助）
-        ui_cfg = self.config.get("ui", {})
-        bubble_dur = ui_cfg.get("bubble_duration_ms", 8000)
-        self.bubble.show_bubble(message, duration_ms=bubble_dur)
-        self.tray_icon.showMessage(name, message, QSystemTrayIcon.Information, 5000)
+        # 5. 提醒气泡和动画保持显示，直到用户选择操作
+        self.bubble.show_reminder(message)
 
-        # 6. 恢复安静模式（回到右下角，显示静态图片）
-        restore_delay = ui_cfg.get("restore_quiet_delay_ms", 10000)
-        weak_self = weakref.ref(self)
-        QTimer.singleShot(restore_delay, lambda ws=weak_self: ws() and ws()._enter_quiet_mode())
+    def _handle_bubble_action(self, action: str) -> None:
+        if self._active_reminder is None or self._active_record is None:
+            logger.warning(f"忽略气泡操作，无活跃提醒: {action}")
+            return
+
+        if action not in {
+            BubbleWidget.ACTION_SNOOZE,
+            BubbleWidget.ACTION_ACKNOWLEDGE,
+        }:
+            logger.warning(f"忽略未知气泡操作: {action}")
+            return
+
+        logger.info(f"处理提醒气泡操作: {action}")
+
+        reminder_key = self._active_reminder.get(
+            "_runtime_id",
+            self._active_reminder.get("id", self._active_reminder.get("name", "")),
+        )
+        record = self._active_record
+        now = self._now_provider()
+        if action == BubbleWidget.ACTION_SNOOZE:
+            record["status"] = "snoozed"
+            record["snooze_until"] = (
+                now + timedelta(minutes=10)
+            ).isoformat(timespec="seconds")
+            try:
+                self._pending_store.replace(record, now=now)
+            except Exception as error:
+                logger.error(f"保存贪睡提醒失败: {error}")
+        else:
+            if self._engine is not None:
+                try:
+                    self._engine.handle_complete(reminder_key)
+                except Exception as error:
+                    logger.error(f"标记提醒完成失败: {error}")
+            self._pending_records = [
+                item for item in self._pending_records
+                if item.get("record_id") != record.get("record_id")
+            ]
+            try:
+                self._pending_store.remove(record["record_id"], now=now)
+            except Exception as error:
+                logger.error(f"删除已完成提醒失败: {error}")
+
+        self._active_record = None
+        self._active_reminder = None
+        self.bubble.hide_bubble()
+        self._enter_quiet_mode()
+        self._process_pending_reminders()
+
+    @pyqtSlot(bool)
+    def set_session_locked(self, locked: bool) -> None:
+        locked = bool(locked)
+        if locked == self._session_locked:
+            return
+        self._session_locked = locked
+
+        if locked:
+            self.bubble.hide_bubble()
+            self._enter_quiet_mode()
+            logger.info("会话已锁定，暂停提醒展示")
+            return
+
+        logger.info("会话已解锁，恢复待处理提醒")
+        if self._active_record is not None:
+            self._display_active_reminder(play_sound=False)
+        else:
+            self._process_pending_reminders()
 
     # --- 鼠标拖拽 ---
     def mousePressEvent(self, event):
@@ -449,6 +726,7 @@ class PetWindow(QWidget):
 
     def mouseReleaseEvent(self, event):
         self._drag_pos = None
+        clamp_to_available_screen(self)
 
     # --- 右键菜单 ---
     def contextMenuEvent(self, event):

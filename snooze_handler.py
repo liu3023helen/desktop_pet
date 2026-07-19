@@ -59,9 +59,11 @@ class SnoozeManager:
         self._completed.discard(reminder_name)
         logger.info(f"'{reminder_name}' 贪睡 {minutes} 分钟，下次触发: {next_time.strftime('%H:%M')}")
 
-    def get_snooze_time(self, reminder_name: str) -> Optional[datetime]:
+    def get_snooze_time(
+        self, reminder_name: str, now: Optional[datetime] = None
+    ) -> Optional[datetime]:
         """获取提醒的贪睡触发时间，None表示未贪睡"""
-        self._check_daily_reset()
+        self._check_daily_reset(now)
         return self._snoozed.get(reminder_name)
 
     def clear_snooze(self, reminder_name: str) -> None:
@@ -97,9 +99,9 @@ class SnoozeManager:
         self._completed.discard(reminder_name)
         logger.info(f"'{reminder_name}' 今天跳过")
 
-    def is_skipped(self, reminder_name: str) -> bool:
+    def is_skipped(self, reminder_name: str, now: Optional[datetime] = None) -> bool:
         """检查提醒是否被今天跳过"""
-        self._check_daily_reset()
+        self._check_daily_reset(now)
         return reminder_name in self._skipped_today
 
     # --- 完成 ---
@@ -111,9 +113,9 @@ class SnoozeManager:
         self._skipped_today.discard(reminder_name)
         logger.info(f"'{reminder_name}' 标记为已完成")
 
-    def is_completed(self, reminder_name: str) -> bool:
+    def is_completed(self, reminder_name: str, now: Optional[datetime] = None) -> bool:
         """检查提醒是否已完成"""
-        self._check_daily_reset()
+        self._check_daily_reset(now)
         return reminder_name in self._completed
 
     # --- 状态查询 ---

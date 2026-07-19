@@ -4,6 +4,7 @@ Desktop Pet - 桌面电子宠物 v2
 """
 import sys
 import threading
+import logging
 
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import QApplication
@@ -12,8 +13,10 @@ from config_manager import ConfigManager
 from dingtalk_handler import open_dingtalk_checkin
 from startup_utils import setup_logging, ensure_data_dir, cleanup_stale_autostart
 from pet_window import PetWindow
+from session_monitor import SessionMonitor
+from single_instance import SingleInstanceGuard
 
-logger = setup_logging()
+logger = logging.getLogger("DesktopPet")
 
 
 def ensure_config(config_mgr: ConfigManager) -> None:
@@ -28,30 +31,44 @@ def ensure_config(config_mgr: ConfigManager) -> None:
 
 
 def main():
-    logger.info("=" * 40)
-    logger.info("Desktop Pet 启动")
-
-    app = QApplication(sys.argv)
-    app.setQuitOnLastWindowClosed(False)
-
-    # 启用高分屏DPI缩放
-    app.setAttribute(Qt.AA_EnableHighDpiScaling)
-    app.setAttribute(Qt.AA_UseHighDpiPixmaps)
-
     # 0. 确保数据目录存在（首次运行创建 data/ 并复制默认配置）
     ensure_data_dir()
-
-    # 0b. 清理失效的开机自启注册表条目（exe被移动后）
-    cleanup_stale_autostart()
 
     # 1. 初始化配置管理器
     config_mgr = ConfigManager()
     ensure_config(config_mgr)
     config = config_mgr.load()
+    logging_cfg = config.get("logging", {})
+    setup_logging(
+        level=logging_cfg.get("level", "INFO"),
+        log_file=logging_cfg.get("file", "logs/pet.log"),
+    )
+    logger.info("=" * 40)
+    logger.info("Desktop Pet 启动")
     logger.info(f"配置加载完成: pet={config.get('pet', {}).get('name', 'unknown')}")
 
+    # 1b. 清理失效的开机自启注册表条目（exe被移动后）
+    cleanup_stale_autostart()
+
+    # 高分屏属性必须在 QApplication 创建前设置
+    QApplication.setAttribute(Qt.AA_EnableHighDpiScaling)
+    QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps)
+    app = QApplication(sys.argv)
+    app.setQuitOnLastWindowClosed(False)
+
+    instance_guard = SingleInstanceGuard()
+    if not instance_guard.acquire():
+        logger.info("已有 Desktop Pet 实例正在运行，本次启动退出")
+        return
+
     # 2. 创建宠物窗口
-    pet_window = PetWindow(config=config.get("pet", {}))
+    pet_window = PetWindow(config=config)
+    if config_mgr.last_load_error:
+        if config_mgr.recovered_from_backup:
+            message = "主配置损坏，已自动使用最近备份。"
+        else:
+            message = "配置无法读取且没有可用备份，当前使用默认设置。"
+        pet_window.tray_icon.showMessage("配置恢复", message)
 
     # 2b. 检查素材完整性
     from startup_utils import check_assets
@@ -93,13 +110,20 @@ def main():
         logger.debug("时间同步模块未就绪，跳过自动校准")
 
     # 4. 显示宠物窗口
+    instance_guard.activation_requested.connect(pet_window.activate_from_launch)
     pet_window.show()
     logger.info("宠物窗口已显示")
+
+    session_monitor = SessionMonitor()
+    session_monitor.lock_state_changed.connect(pet_window.set_session_locked)
+    session_monitor.start()
 
     exit_code = app.exec_()
 
     # 清理
+    session_monitor.stop()
     engine.stop()
+    instance_guard.release()
     logger.info("程序退出")
 
     sys.exit(exit_code)

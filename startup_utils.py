@@ -3,8 +3,10 @@
 从 main.py 抽离，减少主文件职责
 """
 import logging
+from logging.handlers import RotatingFileHandler
 import os
 import shutil
+import subprocess
 import sys
 import winreg
 import winsound
@@ -20,6 +22,18 @@ from utils import get_app_dir, get_exe_path
 # --- 开机自启管理 ---
 APP_NAME = "DesktopPet"
 REG_PATH = r"Software\Microsoft\Windows\CurrentVersion\Run"
+
+
+def get_autostart_command() -> str:
+    """Build a quoted Windows command for frozen and development modes."""
+    app_path = get_exe_path()
+    if getattr(sys, "frozen", False):
+        return subprocess.list2cmdline([app_path])
+
+    interpreter = Path(sys.executable)
+    pythonw = interpreter.with_name("pythonw.exe")
+    launcher = pythonw if pythonw.exists() else interpreter
+    return subprocess.list2cmdline([str(launcher), app_path])
 
 
 def is_auto_start_enabled() -> bool:
@@ -59,7 +73,8 @@ def cleanup_stale_autostart() -> bool:
         return True
     
     current_path = get_exe_path()
-    if registered_path == current_path:
+    current_command = get_autostart_command()
+    if registered_path in {current_path, current_command}:
         return True
     
     if os.path.exists(registered_path):
@@ -87,8 +102,9 @@ def set_auto_start(enabled: bool) -> bool:
                 winreg.DeleteValue(key, APP_NAME)
             except FileNotFoundError:
                 pass
-            winreg.SetValueEx(key, APP_NAME, 0, winreg.REG_SZ, get_exe_path())
-            logging.getLogger(__name__).info(f"开机自启已启用: {get_exe_path()}")
+            command = get_autostart_command()
+            winreg.SetValueEx(key, APP_NAME, 0, winreg.REG_SZ, command)
+            logging.getLogger(__name__).info(f"开机自启已启用: {command}")
         else:
             try:
                 winreg.DeleteValue(key, APP_NAME)
@@ -128,28 +144,58 @@ def setup_logging(level: str = "INFO", log_file: Optional[str] = None) -> loggin
     
     Args:
         level: 日志级别 (DEBUG/INFO/WARNING/ERROR)
-        log_file: 日志文件路径，相对于 app_dir/data/logs/
+        log_file: 日志文件路径，相对于 app_dir/data/
     """
-    log_dir = get_app_dir() / "data" / "logs"
-    log_dir.mkdir(parents=True, exist_ok=True)
-    
     if log_file is None:
-        log_file = "pet.log"
-    
-    log_path = log_dir / log_file
-    
-    # 确保根 logger 只配置一次
+        log_file = "logs/pet.log"
+
+    data_dir = (get_app_dir() / "data").resolve()
+    requested_path = (data_dir / log_file).resolve()
+    try:
+        requested_path.relative_to(data_dir)
+    except ValueError:
+        requested_path = data_dir / "logs" / "pet.log"
+
+    numeric_level = getattr(logging, str(level).upper(), logging.INFO)
+    formatter = logging.Formatter(
+        "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+    )
+
     root_logger = logging.getLogger()
-    if not root_logger.handlers:
-        logging.basicConfig(
-            level=getattr(logging, level.upper(), logging.INFO),
-            format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-            handlers=[
-                logging.FileHandler(log_path, encoding="utf-8"),
-                logging.StreamHandler()
-            ]
-        )
-    
+    for handler in list(root_logger.handlers):
+        if getattr(handler, "_desktop_pet_handler", False):
+            root_logger.removeHandler(handler)
+            handler.close()
+    root_logger.setLevel(numeric_level)
+
+    stream_handler = logging.StreamHandler()
+    stream_handler.setFormatter(formatter)
+    stream_handler._desktop_pet_handler = True
+    root_logger.addHandler(stream_handler)
+
+    candidate_paths = [requested_path]
+    local_app_data = os.environ.get("LOCALAPPDATA")
+    if local_app_data:
+        fallback = Path(local_app_data) / APP_NAME / "logs" / "pet.log"
+        if fallback != requested_path:
+            candidate_paths.append(fallback)
+
+    for log_path in candidate_paths:
+        try:
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            file_handler = RotatingFileHandler(
+                log_path,
+                maxBytes=2 * 1024 * 1024,
+                backupCount=3,
+                encoding="utf-8",
+            )
+            file_handler.setFormatter(formatter)
+            file_handler._desktop_pet_handler = True
+            root_logger.addHandler(file_handler)
+            break
+        except OSError as e:
+            root_logger.warning(f"无法创建日志文件 {log_path}: {e}")
+
     return logging.getLogger("DesktopPet")
 
 

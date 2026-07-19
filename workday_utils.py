@@ -23,6 +23,34 @@ def _get_data_dir():
 HOLIDAY_OVERRIDE: dict = {}
 
 
+def _normalize_holiday_overrides(holidays: dict) -> dict:
+    """Normalize YAML date keys and ignore malformed override values."""
+    if not isinstance(holidays, dict):
+        logger.warning("holidays 配置必须是对象，已忽略")
+        return {}
+
+    normalized = {}
+    for raw_key, raw_value in holidays.items():
+        if isinstance(raw_key, (datetime, date)):
+            key = raw_key.strftime("%Y-%m-%d")
+        elif isinstance(raw_key, str):
+            try:
+                key = datetime.strptime(raw_key, "%Y-%m-%d").strftime("%Y-%m-%d")
+            except ValueError:
+                logger.warning(f"忽略无效节假日日期: {raw_key}")
+                continue
+        else:
+            logger.warning(f"忽略无效节假日日期: {raw_key}")
+            continue
+
+        if not isinstance(raw_value, bool):
+            logger.warning(f"忽略非布尔节假日规则: {key}={raw_value!r}")
+            continue
+        normalized[key] = raw_value
+
+    return normalized
+
+
 def load_holidays_from_yaml(config_path: Optional[Path] = None) -> dict:
     """从 YAML 配置文件加载节假日数据
     
@@ -59,7 +87,7 @@ def load_holidays_from_yaml(config_path: Optional[Path] = None) -> dict:
 def load_holidays() -> None:
     """从配置文件加载节假日数据到全局 HOLIDAY_OVERRIDE"""
     global HOLIDAY_OVERRIDE
-    HOLIDAY_OVERRIDE = load_holidays_from_yaml()
+    HOLIDAY_OVERRIDE = _normalize_holiday_overrides(load_holidays_from_yaml())
 
 
 # 模块初始化时自动加载
@@ -69,7 +97,7 @@ load_holidays()
 def set_holiday_override(holidays: dict) -> None:
     """设置节假日覆盖规则（运行时动态更新）"""
     global HOLIDAY_OVERRIDE
-    HOLIDAY_OVERRIDE = holidays
+    HOLIDAY_OVERRIDE = _normalize_holiday_overrides(holidays)
 
 
 def is_weekend(d: Optional[date] = None) -> bool:

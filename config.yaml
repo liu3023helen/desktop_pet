@@ -40,14 +40,13 @@ weather:
   city: "北京"
   api_provider: "openmeteo"        # openmeteo(免Key) / qweather / openweathermap
   api_key: ""                      # 和风天气/OpenWeatherMap需要填入Key
-  update_interval_minutes: 60
+  update_interval_minutes: 60     # 同一城市天气缓存刷新间隔
 
 # --- UI 配置 ---
 ui:
   window_size: 256                 # 宠物窗口尺寸 (px)
   wander_speed_ms: 33              # 闲逛定时器间隔 (ms), ~30fps
   wander_x_range_ratio: 0.4        # X轴活动范围比例 (0~1)
-  taskbar_reserve_px: 50           # 底部任务栏预留像素
   bubble_max_width: 300            # 提醒气泡最大宽度 (px)
   bubble_duration_ms: 8000         # 提醒气泡显示时长 (ms)
   weather_bubble_duration_ms: 6000 # 天气气泡显示时长 (ms)
@@ -56,7 +55,8 @@ ui:
 # --- 提醒引擎配置 ---
 engine:
   check_interval_sec: 1            # 轮询检查间隔 (秒)
-  sleep_grace_period_sec: 60       # 休眠唤醒后的宽容期 (秒)
+  sleep_grace_period_sec: 60       # 首次启动检查的宽容期 (秒)
+  missed_reminder_retention_hours: 24 # 休眠唤醒后最多追溯时长 (小时)
 
 # --- 日志配置 ---
 logging:
@@ -66,7 +66,7 @@ logging:
 # --- 节假日配置（手动维护或从网络更新）---
 # 格式: "YYYY-MM-DD": true(调休上班) / false(法定假日)
 # true = 虽然是周末但需要上班, false = 虽然是工作日但是假日
-holidays:
+holidays: {}
   # 示例: 2026年元旦
   # "2026-01-01": false
   # 示例: 调休上班

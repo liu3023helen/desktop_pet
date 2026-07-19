@@ -105,5 +105,25 @@ class ReminderSnoozeTests(unittest.TestCase):
         )
 
 
+class ReminderThreadLifecycleTests(unittest.TestCase):
+    def test_immediate_stop_is_not_lost(self):
+        engine = ReminderEngine({"reminders": []})
+
+        engine.start()
+        engine.stop()
+
+        self.assertFalse(engine.isRunning())
+
+    def test_engine_can_restart_after_a_clean_stop(self):
+        engine = ReminderEngine({"reminders": []})
+
+        engine.start()
+        engine.stop()
+        engine.start()
+        engine.stop()
+
+        self.assertFalse(engine.isRunning())
+
+
 if __name__ == "__main__":
     unittest.main()

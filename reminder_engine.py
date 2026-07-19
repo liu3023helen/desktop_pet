@@ -5,7 +5,6 @@
 """
 import logging
 import threading
-import time
 from datetime import datetime, timedelta
 from typing import Any, Callable, Dict, List, Optional
 
@@ -74,7 +73,7 @@ class ReminderEngine(QThread):
         self.config = config
         holidays = config.get("holidays", {}) if isinstance(config, dict) else {}
         set_holiday_override(holidays)
-        self._running = False
+        self._stop_event = threading.Event()
 
         # 注册的提醒列表
         self._reminders: List[Dict[str, Any]] = []
@@ -140,22 +139,29 @@ class ReminderEngine(QThread):
         set_holiday_override(new_config.get("holidays", {}))
         self.load_reminders()
 
+    def start(self, priority=QThread.InheritPriority) -> None:
+        """Start with a fresh stop event before the worker can run."""
+        if self.isRunning():
+            return
+        self._stop_event.clear()
+        super().start(priority)
+
     def run(self) -> None:
         """线程主循环 - 每秒检查一次是否需要触发提醒"""
-        self._running = True
         self.load_reminders()
 
-        while self._running:
+        while not self._stop_event.is_set():
             try:
                 self._check_reminders()
             except Exception as e:
                 logger.error(f"检查提醒时出错: {e}")
-            time.sleep(1)  # 精度1秒
+            self._stop_event.wait(1)  # 保持1秒精度，同时允许立即停止
 
     def stop(self) -> None:
         """停止引擎"""
-        self._running = False
-        self.wait(1000)
+        self._stop_event.set()
+        if self.isRunning() and not self.wait(2000):
+            logger.error("提醒引擎未能在超时时间内停止")
 
     def _check_reminders(self) -> None:
         """检查是否需要触发提醒"""

@@ -42,6 +42,25 @@ class ConfigDefaultsTests(unittest.TestCase):
         self.assertIn("window_size", config["ui"])
         self.assertIn("check_interval_sec", config["engine"])
 
+    def test_invalid_mapping_sections_fall_back_to_defaults(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "config.yaml"
+            config_path.write_text(
+                yaml.safe_dump({
+                    "pet": "invalid",
+                    "ui": [],
+                    "weather": False,
+                    "logging": "DEBUG",
+                }),
+                encoding="utf-8",
+            )
+            config = ConfigManager(str(config_path)).load()
+
+        self.assertIsInstance(config["pet"], dict)
+        self.assertIsInstance(config["ui"], dict)
+        self.assertIsInstance(config["weather"], dict)
+        self.assertIsInstance(config["logging"], dict)
+
 
 class ConfigRecoveryTests(unittest.TestCase):
     def test_corrupt_primary_config_recovers_from_backup(self):

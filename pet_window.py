@@ -4,6 +4,7 @@
 """
 import logging
 import sys
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from PyQt5.QtWidgets import (
@@ -15,6 +16,7 @@ from PyQt5.QtGui import QPixmap, QIcon
 
 from animation_player import AnimationPlayer
 from bubble_widget import BubbleWidget
+from pending_reminder_store import PendingReminderStore
 from startup_utils import is_auto_start_enabled, set_auto_start, play_reminder_sound
 
 logger = logging.getLogger(__name__)
@@ -45,7 +47,12 @@ def clamp_to_available_screen(window: QWidget) -> None:
 class PetWindow(QWidget):
     """透明宠物窗口 - 支持安静模式"""
 
-    def __init__(self, config: dict = None):
+    def __init__(
+        self,
+        config: dict = None,
+        pending_store: PendingReminderStore = None,
+        now_provider=None,
+    ):
         super().__init__()
         self.config = config or {}
         nested_pet_cfg = self.config.get("pet")
@@ -122,13 +129,33 @@ class PetWindow(QWidget):
         self._config_mgr = None
         # 提醒引擎引用（由外部设置）
         self._engine = None
+        self._now_provider = now_provider or datetime.now
+        self._pending_store = (
+            pending_store if pending_store is not None else PendingReminderStore()
+        )
+        try:
+            self._pending_records = self._pending_store.load(
+                now=self._now_provider()
+            )
+        except Exception as error:
+            logger.error(f"加载待处理提醒失败: {error}")
+            self._pending_records = []
+        self._active_record = None
         self._active_reminder = None
+        self._deferred_bubble = None
+        self.pending_reminder_timer = QTimer(self)
+        self.pending_reminder_timer.setInterval(1000)
+        self.pending_reminder_timer.timeout.connect(
+            self._process_pending_reminders
+        )
+        self.pending_reminder_timer.start()
         self._weather_service = None
         self._weather_service_config = None
         self._diagnostics_thread = None
 
         # 系统托盘
         self._setup_tray()
+        self._process_pending_reminders()
 
         logger.info("宠物窗口初始化完成（安静模式，右下角静止）")
 
@@ -301,7 +328,7 @@ class PetWindow(QWidget):
             time_sync_cfg = config.get("time_sync", {})
             server = time_sync_cfg.get("ntp_server", "ntp.aliyun.com")
             tolerance = time_sync_cfg.get("tolerance_seconds", 30)
-            self.bubble.show_loading("正在校准网络时间...")
+            self._show_loading_bubble("正在校准网络时间...")
 
             def do_sync():
                 service = TimeSyncService(server=server)
@@ -328,14 +355,14 @@ class PetWindow(QWidget):
             import threading
             threading.Thread(target=do_sync, daemon=True).start()
         except ImportError:
-            self.bubble.show_result("时间校准功能尚未就绪")
+            self._show_result_bubble("时间校准功能尚未就绪")
         except Exception as e:
             logger.error(f"时间校准失败: {e}")
-            self.bubble.show_result(f"时间校准失败：{e}")
+            self._show_result_bubble(f"时间校准失败：{e}")
 
     @pyqtSlot(str)
     def _show_status_result(self, message: str):
-        self.bubble.show_result(message)
+        self._show_result_bubble(message)
 
     def _show_weather(self):
         """显示天气信息（漫画气泡 + 托盘通知）"""
@@ -345,14 +372,14 @@ class PetWindow(QWidget):
             config = self._config_mgr.load() if self._config_mgr else {}
             weather_cfg = config.get("weather", {})
             if not weather_cfg.get("enabled", True):
-                self.bubble.show_result("天气查询已在配置中禁用")
+                self._show_result_bubble("天气查询已在配置中禁用")
                 return
             city = weather_cfg.get("city", "北京")
 
             logger.info(f"[Weather] config loaded: city={city}, weather_cfg={weather_cfg}")
             logger.info(f"[Weather] bubble instance: {self.bubble}")
 
-            self.bubble.show_loading(f"正在获取 {city} 的天气...")
+            self._show_loading_bubble(f"正在获取 {city} 的天气...")
 
             def do_fetch():
                 logger.info("[Weather] do_fetch started in thread")
@@ -387,24 +414,24 @@ class PetWindow(QWidget):
             import threading
             threading.Thread(target=do_fetch, daemon=True).start()
         except ImportError:
-            self.bubble.show_result("天气查询功能尚未就绪")
+            self._show_result_bubble("天气查询功能尚未就绪")
         except Exception as e:
             logger.error(f"天气查询失败: {e}")
-            self.bubble.show_result("天气查询失败")
+            self._show_result_bubble("天气查询失败")
 
     def _run_diagnostics(self):
         """Run system diagnostics without blocking the UI thread."""
         if self._diagnostics_thread is not None and self._diagnostics_thread.is_alive():
-            self.bubble.show_loading("正在运行自检...")
+            self._show_loading_bubble("正在运行自检...")
             return
 
         from diagnostics import run_diagnostics_async
 
-        self.bubble.show_loading("正在运行自检...")
+        self._show_loading_bubble("正在运行自检...")
 
         def show_result(title, success, lines):
             summary = "\n".join(lines[:3]) if lines else "未返回诊断详情"
-            self.bubble.show_result(f"{title}\n{summary}")
+            self._show_result_bubble(f"{title}\n{summary}")
 
         self._diagnostics_thread = run_diagnostics_async(
             self._config_mgr,
@@ -416,8 +443,30 @@ class PetWindow(QWidget):
         """在主线程显示天气气泡"""
         logger.info(f"[Weather] _show_weather_bubble: msg={msg!r}")
         logger.info(f"[Weather] bubble before show: visible={self.bubble.isVisible()}")
-        self.bubble.show_result(msg)
+        self._show_result_bubble(msg)
         logger.info(f"[Weather] bubble after show: visible={self.bubble.isVisible()}")
+
+    def _show_loading_bubble(self, message: str) -> None:
+        if self._active_record is not None:
+            self._deferred_bubble = ("loading", message)
+            return
+        self.bubble.show_loading(message)
+
+    def _show_result_bubble(self, message: str) -> None:
+        if self._active_record is not None:
+            self._deferred_bubble = ("result", message)
+            return
+        self.bubble.show_result(message)
+
+    def _show_deferred_bubble(self) -> None:
+        if self._active_record is not None or self._deferred_bubble is None:
+            return
+        mode, message = self._deferred_bubble
+        self._deferred_bubble = None
+        if mode == "loading":
+            self.bubble.show_loading(message)
+        else:
+            self.bubble.show_result(message)
 
     def _wander_step(self):
         """闲逛步进逻辑 — 限制在屏幕中央区域活动"""
@@ -446,11 +495,67 @@ class PetWindow(QWidget):
         self.move(new_x, new_y)
 
     def trigger_reminder(self, reminder: dict) -> None:
-        """
-        触发提醒回调（由提醒引擎信号连接到主线程调用）
-        提醒时：跳到屏幕中央 + 进入活跃模式 + 播放动画 + 提示音 + 气泡文字
-        10秒后：恢复右下角安静模式
-        """
+        """Persist a reminder and enqueue it for FIFO presentation."""
+        payload = dict(reminder)
+        payload.setdefault("name", "提醒")
+        payload.setdefault("message", f"{payload['name']}时间到了！")
+        now = self._now_provider()
+        try:
+            record = self._pending_store.create_record(payload, now)
+        except (TypeError, ValueError) as error:
+            logger.error(f"无法创建待处理提醒: {error}")
+            return
+
+        self._pending_records.append(record)
+        self._pending_records.sort(key=lambda item: item["triggered_at"])
+        try:
+            self._pending_store.append(record, now=now)
+        except Exception as error:
+            logger.error(f"保存待处理提醒失败，将仅保留在内存中: {error}")
+        self._process_pending_reminders()
+
+    @staticmethod
+    def _is_record_ready(record: dict, now: datetime) -> bool:
+        if record.get("status") in {"pending", "active"}:
+            return True
+        if record.get("status") != "snoozed":
+            return False
+        try:
+            snooze_until = datetime.fromisoformat(record["snooze_until"])
+        except (KeyError, TypeError, ValueError):
+            return False
+        return snooze_until <= now
+
+    def _process_pending_reminders(self) -> None:
+        if self._active_record is not None:
+            return
+
+        now = self._now_provider()
+        record = next(
+            (
+                item for item in self._pending_records
+                if self._is_record_ready(item, now)
+            ),
+            None,
+        )
+        if record is None:
+            self._show_deferred_bubble()
+            return
+
+        record["status"] = "active"
+        record["snooze_until"] = None
+        self._active_record = record
+        self._active_reminder = dict(record["reminder"])
+        try:
+            self._pending_store.replace(record, now=now)
+        except Exception as error:
+            logger.error(f"更新待处理提醒状态失败: {error}")
+        self._display_active_reminder()
+
+    def _display_active_reminder(self) -> None:
+        reminder = self._active_reminder
+        if reminder is None:
+            return
         name = reminder.get("name", "提醒")
         message = reminder.get("message", f"{name}时间到了！")
         animation = reminder.get("animation", "cheer")
@@ -482,33 +587,53 @@ class PetWindow(QWidget):
             play_reminder_sound(sound_file if sound_file else None)
 
         # 5. 提醒气泡和动画保持显示，直到用户选择操作
-        self._active_reminder = dict(reminder)
         self.bubble.show_reminder(message)
 
     def _handle_bubble_action(self, action: str) -> None:
-        if self._active_reminder is None:
+        if self._active_reminder is None or self._active_record is None:
+            return
+
+        if action not in {
+            BubbleWidget.ACTION_SNOOZE,
+            BubbleWidget.ACTION_ACKNOWLEDGE,
+        }:
             return
 
         reminder_key = self._active_reminder.get(
             "_runtime_id",
             self._active_reminder.get("id", self._active_reminder.get("name", "")),
         )
-        if self._engine is not None:
-            if action == BubbleWidget.ACTION_SNOOZE:
-                self._engine.handle_snooze(reminder_key, 10)
-            elif action == BubbleWidget.ACTION_ACKNOWLEDGE:
-                self._engine.handle_complete(reminder_key)
-            else:
-                return
-        elif action not in {
-            BubbleWidget.ACTION_SNOOZE,
-            BubbleWidget.ACTION_ACKNOWLEDGE,
-        }:
-            return
+        record = self._active_record
+        now = self._now_provider()
+        if action == BubbleWidget.ACTION_SNOOZE:
+            record["status"] = "snoozed"
+            record["snooze_until"] = (
+                now + timedelta(minutes=10)
+            ).isoformat(timespec="seconds")
+            try:
+                self._pending_store.replace(record, now=now)
+            except Exception as error:
+                logger.error(f"保存贪睡提醒失败: {error}")
+        else:
+            if self._engine is not None:
+                try:
+                    self._engine.handle_complete(reminder_key)
+                except Exception as error:
+                    logger.error(f"标记提醒完成失败: {error}")
+            self._pending_records = [
+                item for item in self._pending_records
+                if item.get("record_id") != record.get("record_id")
+            ]
+            try:
+                self._pending_store.remove(record["record_id"], now=now)
+            except Exception as error:
+                logger.error(f"删除已完成提醒失败: {error}")
 
+        self._active_record = None
         self._active_reminder = None
         self.bubble.hide_bubble()
         self._enter_quiet_mode()
+        self._process_pending_reminders()
 
     # --- 鼠标拖拽 ---
     def mousePressEvent(self, event):

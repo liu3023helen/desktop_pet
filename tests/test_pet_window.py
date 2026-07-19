@@ -1,11 +1,15 @@
 import os
+import tempfile
 import unittest
+from datetime import datetime, timedelta
+from pathlib import Path
 from unittest.mock import Mock, patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt5.QtWidgets import QApplication
 
+from pending_reminder_store import PendingReminderStore
 from pet_window import PetWindow, clamp_to_available_screen
 
 
@@ -15,9 +19,23 @@ class PetWindowModeTests(unittest.TestCase):
         cls.app = QApplication.instance() or QApplication([])
 
     def setUp(self):
-        self.window = PetWindow({"name": "Test Pet"})
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp_dir.cleanup)
+        self.now = datetime(2026, 7, 20, 12, 0, 0)
+        self.store = PendingReminderStore(
+            Path(self.temp_dir.name) / "pending.yaml"
+        )
+        self.window = self._create_window({"name": "Test Pet"})
+
+    def _create_window(self, config):
+        return PetWindow(
+            config,
+            pending_store=self.store,
+            now_provider=lambda: self.now,
+        )
 
     def tearDown(self):
+        self.window.pending_reminder_timer.stop()
         self.window.wander_timer.stop()
         self.window.animation_player.stop()
         self.window.bubble.close()
@@ -44,7 +62,7 @@ class PetWindowModeTests(unittest.TestCase):
         self.window.bubble.close()
         self.window.tray_icon.hide()
         self.window.close()
-        self.window = PetWindow({
+        self.window = self._create_window({
             "pet": {"name": "Configured Pet"},
             "ui": {
                 "window_size": 128,
@@ -92,10 +110,19 @@ class PetWindowModeTests(unittest.TestCase):
 
         self.window._handle_bubble_action("snooze_10")
 
-        engine.handle_snooze.assert_called_once_with("task-id", 10)
+        engine.handle_snooze.assert_not_called()
         self.assertTrue(self.window._quiet_mode)
         self.assertEqual(self.window.bubble.mode, "hidden")
         self.assertIsNone(self.window._active_reminder)
+        stored = self.store.load(now=self.now)
+        self.assertEqual(stored[0]["status"], "snoozed")
+
+        self.now += timedelta(minutes=10)
+        self.window._process_pending_reminders()
+
+        self.assertEqual(self.window.bubble.mode, "reminder")
+        self.assertEqual(self.window._active_reminder["id"], "task-id")
+        self.assertFalse(self.window._quiet_mode)
 
     def test_reminder_bubble_acknowledge_completes_immediately(self):
         engine = Mock()
@@ -135,7 +162,7 @@ class PetWindowModeTests(unittest.TestCase):
         self.window.bubble.close()
         self.window.tray_icon.hide()
         self.window.close()
-        self.window = PetWindow({
+        self.window = self._create_window({
             "pet": {"name": "Weather Test"},
             "weather": {"enabled": False},
         })
@@ -197,7 +224,7 @@ class PetWindowModeTests(unittest.TestCase):
         self.window.bubble.close()
         self.window.tray_icon.hide()
         self.window.close()
-        self.window = PetWindow({
+        self.window = self._create_window({
             "pet": {"name": "Walker", "default_animation": "walk"},
         })
 
@@ -208,12 +235,87 @@ class PetWindowModeTests(unittest.TestCase):
         self.window.bubble.close()
         self.window.tray_icon.hide()
         self.window.close()
-        self.window = PetWindow({
+        self.window = self._create_window({
             "pet": {"name": "Fallback", "default_animation": "missing"},
         })
 
         self.assertEqual(self.window._default_animation, "cheer")
         self.assertTrue(self.window.animation_player.is_animation_loaded("cheer"))
+
+    def test_reminders_are_persisted_and_presented_in_fifo_order(self):
+        engine = Mock()
+        self.window._engine = engine
+        first = {
+            "id": "first",
+            "name": "First",
+            "message": "First message",
+            "action_type": "notify_only",
+            "sound": False,
+        }
+        second = {
+            "id": "second",
+            "name": "Second",
+            "message": "Second message",
+            "action_type": "notify_only",
+            "sound": False,
+        }
+
+        self.window.trigger_reminder(first)
+        self.window.trigger_reminder(second)
+
+        self.assertEqual(self.window._active_reminder["id"], "first")
+        self.assertEqual(len(self.store.load(now=self.now)), 2)
+
+        self.window._handle_bubble_action("acknowledge")
+
+        self.assertEqual(self.window._active_reminder["id"], "second")
+        self.assertEqual(self.window.bubble.text(), "Second message")
+
+        self.window._handle_bubble_action("acknowledge")
+
+        self.assertEqual(
+            [call.args[0] for call in engine.handle_complete.call_args_list],
+            ["first", "second"],
+        )
+        self.assertEqual(self.store.load(now=self.now), [])
+
+    def test_pending_reminder_is_restored_after_window_restart(self):
+        self.window.trigger_reminder({
+            "id": "restart",
+            "name": "Restart",
+            "message": "Still pending",
+            "action_type": "notify_only",
+            "sound": False,
+        })
+        self.window.pending_reminder_timer.stop()
+        self.window.bubble.close()
+        self.window.tray_icon.hide()
+        self.window.close()
+
+        self.window = self._create_window({"name": "Test Pet"})
+
+        self.assertEqual(self.window._active_reminder["id"], "restart")
+        self.assertEqual(self.window.bubble.mode, "reminder")
+        self.assertEqual(self.window.bubble.text(), "Still pending")
+
+    def test_utility_result_waits_until_active_reminder_is_closed(self):
+        self.window.trigger_reminder({
+            "id": "priority",
+            "name": "Priority",
+            "message": "Handle me first",
+            "action_type": "notify_only",
+            "sound": False,
+        })
+
+        self.window._show_status_result("天气查询完成")
+
+        self.assertEqual(self.window.bubble.mode, "reminder")
+        self.assertEqual(self.window.bubble.text(), "Handle me first")
+
+        self.window._handle_bubble_action("acknowledge")
+
+        self.assertEqual(self.window.bubble.mode, "result")
+        self.assertEqual(self.window.bubble.text(), "天气查询完成")
 
 
 if __name__ == "__main__":

@@ -1,6 +1,6 @@
 import os
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -111,6 +111,21 @@ class PetWindowModeTests(unittest.TestCase):
         })
 
         self.assertFalse(self.window._weather_action.isEnabled())
+
+    def test_diagnostics_entry_starts_async_check_with_config_manager(self):
+        config_manager = Mock()
+        worker = Mock()
+        worker.is_alive.return_value = False
+        self.window._config_mgr = config_manager
+
+        with patch(
+            "diagnostics.run_diagnostics_async", return_value=worker
+        ) as run_async:
+            self.window._run_diagnostics()
+
+        self.assertIs(self.window._diagnostics_thread, worker)
+        self.assertIs(run_async.call_args.args[0], config_manager)
+        self.assertTrue(callable(run_async.call_args.args[1]))
 
 
 if __name__ == "__main__":

@@ -119,6 +119,7 @@ class PetWindow(QWidget):
         self._interaction_dialogs = []
         self._weather_service = None
         self._weather_service_config = None
+        self._diagnostics_thread = None
 
         # 系统托盘
         self._setup_tray()
@@ -217,6 +218,10 @@ class PetWindow(QWidget):
         self._weather_action.setEnabled(weather_enabled)
         self._weather_action.triggered.connect(self._show_weather)
         tray_menu.addAction(self._weather_action)
+
+        diagnostics_action = QAction("运行自检", self)
+        diagnostics_action.triggered.connect(self._run_diagnostics)
+        tray_menu.addAction(diagnostics_action)
 
         tray_menu.addSeparator()
 
@@ -382,6 +387,26 @@ class PetWindow(QWidget):
             logger.error(f"天气查询失败: {e}")
             weather_dur = self.config.get("ui", {}).get("weather_bubble_duration_ms", 6000)
             self.bubble.show_bubble("天气查询失败", duration_ms=weather_dur)
+
+    def _run_diagnostics(self):
+        """Run system diagnostics without blocking the UI thread."""
+        if self._diagnostics_thread is not None and self._diagnostics_thread.is_alive():
+            self.tray_icon.showMessage("运行自检", "自检正在进行中")
+            return
+
+        from diagnostics import run_diagnostics_async
+
+        self.tray_icon.showMessage("运行自检", "正在检查配置、素材和网络...")
+
+        def show_result(title, success, lines):
+            summary = "\n".join(lines[:3]) if lines else "未返回诊断详情"
+            icon = QSystemTrayIcon.Information if success else QSystemTrayIcon.Warning
+            self.tray_icon.showMessage(title, summary, icon, 6000)
+
+        self._diagnostics_thread = run_diagnostics_async(
+            self._config_mgr,
+            show_result,
+        )
 
     @pyqtSlot(str)
     def _show_weather_bubble(self, msg: str):

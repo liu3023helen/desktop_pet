@@ -70,7 +70,14 @@ class BuildScriptTests(unittest.TestCase):
             root = Path(temp_dir)
             build_dir = root / "build"
             staged_dist = build_dir / "dist"
+            backup_dist = build_dir / "previous-dist"
             dist_dir = root / "dist"
+            stale_data = dist_dir / "data"
+            stale_data.mkdir(parents=True)
+            (stale_data / "pending_reminders.yaml").write_text(
+                "stale reminder",
+                encoding="utf-8",
+            )
 
             def complete_build(*args, **kwargs):
                 staged_dist.mkdir(parents=True)
@@ -82,6 +89,8 @@ class BuildScriptTests(unittest.TestCase):
             ), patch.object(module, "STAGING_DIST_DIR", staged_dist), patch.object(
                 module, "WORK_DIR", build_dir / "work"
             ), patch.object(module, "SPEC_DIR", build_dir / "spec"), patch.object(
+                module, "BACKUP_DIST_DIR", backup_dist
+            ), patch.object(
                 module, "DIST_DIR", dist_dir
             ), patch.object(
                 module, "validate_build_environment", return_value=[]
@@ -96,6 +105,7 @@ class BuildScriptTests(unittest.TestCase):
                 b"executable",
             )
             self.assertFalse(build_dir.exists())
+            self.assertFalse((dist_dir / "data").exists())
 
 
 if __name__ == "__main__":

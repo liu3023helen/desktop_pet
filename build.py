@@ -15,8 +15,10 @@ BUILD_DIR = ROOT / "build"
 STAGING_DIST_DIR = BUILD_DIR / "dist"
 WORK_DIR = BUILD_DIR / "work"
 SPEC_DIR = BUILD_DIR / "spec"
+BACKUP_DIST_DIR = BUILD_DIR / "previous-dist"
 MAIN = ROOT / "main.py"
 ICON = ROOT / "resources" / "icon.ico"
+BUILD_REQUIREMENTS = ROOT / "requirements-build.txt"
 APP_NAME = "DesktopPet"
 
 DATA_FILES = (
@@ -46,7 +48,7 @@ def validate_build_environment() -> List[str]:
     if importlib.util.find_spec("PyInstaller") is None:
         errors.append(
             f"当前 Python 未安装 PyInstaller: {sys.executable}\n"
-            f"请运行: {sys.executable} -m pip install -r requirements-build.txt"
+            f"请运行: {sys.executable} -m pip install -r \"{BUILD_REQUIREMENTS}\""
         )
     return errors
 
@@ -79,6 +81,25 @@ def build_command(console: bool = False) -> List[str]:
     )
     command.append(str(MAIN))
     return command
+
+
+def publish_staged_release() -> None:
+    """Replace the complete release directory, restoring it on failure."""
+    had_previous_release = DIST_DIR.exists()
+    if BACKUP_DIST_DIR.exists():
+        shutil.rmtree(BACKUP_DIST_DIR)
+    if had_previous_release:
+        DIST_DIR.replace(BACKUP_DIST_DIR)
+
+    try:
+        STAGING_DIST_DIR.replace(DIST_DIR)
+    except OSError:
+        if had_previous_release and BACKUP_DIST_DIR.exists():
+            BACKUP_DIST_DIR.replace(DIST_DIR)
+        raise
+
+    if BACKUP_DIST_DIR.exists():
+        shutil.rmtree(BACKUP_DIST_DIR)
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -120,9 +141,13 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(f"[Build] PyInstaller 未生成有效产物: {staged_exe}")
         return 3
 
-    DIST_DIR.mkdir(parents=True, exist_ok=True)
+    try:
+        publish_staged_release()
+    except OSError as error:
+        print(f"[Build] 发布失败，已保留或恢复旧产物: {error}")
+        return 4
+
     final_exe = DIST_DIR / staged_exe.name
-    staged_exe.replace(final_exe)
     size_mb = final_exe.stat().st_size / (1024 * 1024)
     shutil.rmtree(BUILD_DIR)
     print(f"[Build] 打包成功: {final_exe.relative_to(ROOT)} ({size_mb:.1f} MB)")

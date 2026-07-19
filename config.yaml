@@ -65,7 +65,7 @@ logging:
 # --- 节假日配置（手动维护或从网络更新）---
 # 格式: "YYYY-MM-DD": true(调休上班) / false(法定假日)
 # true = 虽然是周末但需要上班, false = 虽然是工作日但是假日
-holidays:
+holidays: {}
   # 示例: 2026年元旦
   # "2026-01-01": false
   # 示例: 调休上班

@@ -57,6 +57,12 @@ def _trigger_key(reminder: Dict[str, Any], index: int, today_key: str) -> str:
     return f"{today_key}_{reminder.get('time', '')}_{_reminder_identity(reminder, index)}"
 
 
+def _bounded_number(value: Any, default: float, minimum: float, maximum: float) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return default
+    return max(minimum, min(float(value), maximum))
+
+
 class ReminderEngine(QThread):
     """提醒引擎 - 在独立线程中运行定时调度"""
 
@@ -74,6 +80,7 @@ class ReminderEngine(QThread):
         holidays = config.get("holidays", {}) if isinstance(config, dict) else {}
         set_holiday_override(holidays)
         self._stop_event = threading.Event()
+        self._load_engine_settings(config)
 
         # 注册的提醒列表
         self._reminders: List[Dict[str, Any]] = []
@@ -112,6 +119,17 @@ class ReminderEngine(QThread):
         self._handlers[action_type] = handler
         logger.info(f"注册动作处理器: {action_type}")
 
+    def _load_engine_settings(self, config: Dict[str, Any]) -> None:
+        engine_cfg = config.get("engine", {}) if isinstance(config, dict) else {}
+        if not isinstance(engine_cfg, dict):
+            engine_cfg = {}
+        self._check_interval_sec = _bounded_number(
+            engine_cfg.get("check_interval_sec"), 1.0, 0.1, 60.0
+        )
+        self._sleep_grace_period_sec = int(_bounded_number(
+            engine_cfg.get("sleep_grace_period_sec"), 60, 0, 3600
+        ))
+
     def load_reminders(self) -> None:
         """从配置加载提醒"""
         configured = self.config.get("reminders", [])
@@ -137,6 +155,7 @@ class ReminderEngine(QThread):
         """外部调用：重新加载配置（管理面板修改后）"""
         self.config = new_config
         set_holiday_override(new_config.get("holidays", {}))
+        self._load_engine_settings(new_config)
         self.load_reminders()
 
     def start(self, priority=QThread.InheritPriority) -> None:
@@ -155,7 +174,7 @@ class ReminderEngine(QThread):
                 self._check_reminders()
             except Exception as e:
                 logger.error(f"检查提醒时出错: {e}")
-            self._stop_event.wait(1)  # 保持1秒精度，同时允许立即停止
+            self._stop_event.wait(self._check_interval_sec)
 
     def stop(self) -> None:
         """停止引擎"""
@@ -222,7 +241,7 @@ class ReminderEngine(QThread):
             # 检查是否已到时间且今天未触发
             # 休眠唤醒容错：检查当前时间及过去 60 秒内是否有未触发的提醒
             triggered = False
-            for offset in range(61):  # 0~60 秒窗口
+            for offset in range(self._sleep_grace_period_sec + 1):
                 check_time = now - timedelta(seconds=offset)
                 if check_time.hour == h and check_time.minute == m:
                     with self._lock:

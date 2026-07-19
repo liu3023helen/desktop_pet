@@ -143,5 +143,49 @@ class ReminderDailyResetTests(unittest.TestCase):
         self.assertEqual(engine._triggered_today, set())
         self.assertEqual(engine._snooze_mgr._skipped_today, set())
 
+
+class ReminderEngineSettingsTests(unittest.TestCase):
+    def test_engine_settings_control_interval_and_grace_window(self):
+        engine = ReminderEngine({
+            "reminders": [make_reminder(reminder_time="09:30")],
+            "engine": {
+                "check_interval_sec": 0.25,
+                "sleep_grace_period_sec": 5,
+            },
+        })
+        engine.load_reminders()
+        engine.get_effective_now = lambda: datetime(2026, 7, 20, 9, 31, 10)
+        fired = []
+        engine._trigger_reminder = lambda reminder: fired.append(reminder)
+
+        engine._check_reminders()
+        self.assertEqual(fired, [])
+        self.assertEqual(engine._check_interval_sec, 0.25)
+
+        engine.reload_reminders({
+            "reminders": [make_reminder(reminder_time="09:30")],
+            "engine": {
+                "check_interval_sec": 0.5,
+                "sleep_grace_period_sec": 15,
+            },
+        })
+        engine._check_reminders()
+
+        self.assertEqual(len(fired), 1)
+        self.assertEqual(engine._check_interval_sec, 0.5)
+        self.assertEqual(engine._sleep_grace_period_sec, 15)
+
+    def test_invalid_engine_settings_use_safe_defaults(self):
+        engine = ReminderEngine({
+            "reminders": [],
+            "engine": {
+                "check_interval_sec": "fast",
+                "sleep_grace_period_sec": None,
+            },
+        })
+
+        self.assertEqual(engine._check_interval_sec, 1.0)
+        self.assertEqual(engine._sleep_grace_period_sec, 60)
+
 if __name__ == "__main__":
     unittest.main()

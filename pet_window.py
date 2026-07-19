@@ -108,6 +108,7 @@ class PetWindow(QWidget):
         self._config_mgr = None
         # 提醒引擎引用（由外部设置）
         self._engine = None
+        self._interaction_dialogs = []
 
         # 系统托盘
         self._setup_tray()
@@ -434,12 +435,32 @@ class PetWindow(QWidget):
         bubble_dur = ui_cfg.get("bubble_duration_ms", 8000)
         self.bubble.show_bubble(message, duration_ms=bubble_dur)
         self.tray_icon.showMessage(name, message, QSystemTrayIcon.Information, 5000)
+        self._show_reminder_interaction(reminder)
 
         if play_animation:
             # 6. 恢复安静模式（回到右下角，显示静态图片）
             restore_delay = ui_cfg.get("restore_quiet_delay_ms", 10000)
             weak_self = weakref.ref(self)
             QTimer.singleShot(restore_delay, lambda ws=weak_self: ws() and ws()._enter_quiet_mode())
+
+    def _show_reminder_interaction(self, reminder: dict) -> None:
+        if self._engine is None:
+            return
+
+        from reminder_dialog import ReminderInteractionDialog
+
+        dialog = ReminderInteractionDialog(reminder, self)
+        dialog.snooze_requested.connect(self._engine.handle_snooze)
+        dialog.skip_today_requested.connect(self._engine.handle_skip_today)
+        dialog.complete_requested.connect(self._engine.handle_complete)
+        self._interaction_dialogs.append(dialog)
+
+        def remove_dialog():
+            if dialog in self._interaction_dialogs:
+                self._interaction_dialogs.remove(dialog)
+
+        dialog.finished.connect(remove_dialog)
+        dialog.show()
 
     # --- 鼠标拖拽 ---
     def mousePressEvent(self, event):

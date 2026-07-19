@@ -1,5 +1,6 @@
 import os
 import unittest
+from unittest.mock import Mock
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -73,6 +74,17 @@ class PetWindowModeTests(unittest.TestCase):
         self.assertTrue(self.window._quiet_mode)
         self.assertFalse(self.window.wander_timer.isActive())
         self.assertEqual(self.window.pos(), original_position)
+
+    def test_interaction_dialog_calls_engine_action(self):
+        engine = Mock()
+        self.window._engine = engine
+
+        self.window._show_reminder_interaction({"name": "Task", "message": "Do it"})
+        dialog = self.window._interaction_dialogs[0]
+        dialog._snooze(10)
+
+        engine.handle_snooze.assert_called_once_with("Task", 10)
+        self.assertEqual(self.window._interaction_dialogs, [])
 
 
 if __name__ == "__main__":

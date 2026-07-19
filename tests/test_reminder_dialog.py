@@ -4,9 +4,9 @@ from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PyQt5.QtWidgets import QApplication
+from PyQt5.QtWidgets import QApplication, QPushButton
 
-from reminder_dialog import ReminderFormDialog
+from reminder_dialog import ReminderFormDialog, ReminderInteractionDialog
 
 
 class ReminderFormTests(unittest.TestCase):
@@ -56,6 +56,37 @@ class ReminderFormTests(unittest.TestCase):
 
         warning.assert_called_once()
         self.assertEqual(self.dialog.get_result(), {})
+
+
+class ReminderInteractionTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    def test_snooze_button_emits_name_and_minutes(self):
+        dialog = ReminderInteractionDialog({"name": "Stand up", "message": "Move"})
+        emitted = []
+        dialog.snooze_requested.connect(
+            lambda name, minutes: emitted.append((name, minutes))
+        )
+
+        dialog.findChild(QPushButton, "snooze_5_button").click()
+
+        self.assertEqual(emitted, [("Stand up", 5)])
+
+    def test_skip_and_complete_buttons_emit_actions(self):
+        skip_dialog = ReminderInteractionDialog({"name": "Task"})
+        skipped = []
+        skip_dialog.skip_today_requested.connect(skipped.append)
+        skip_dialog.findChild(QPushButton, "skip_today_button").click()
+
+        complete_dialog = ReminderInteractionDialog({"name": "Task"})
+        completed = []
+        complete_dialog.complete_requested.connect(completed.append)
+        complete_dialog.findChild(QPushButton, "complete_button").click()
+
+        self.assertEqual(skipped, ["Task"])
+        self.assertEqual(completed, ["Task"])
 
 
 if __name__ == "__main__":

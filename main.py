@@ -4,6 +4,7 @@ Desktop Pet - 桌面电子宠物 v2
 """
 import sys
 import threading
+import logging
 
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import QApplication
@@ -13,7 +14,7 @@ from dingtalk_handler import open_dingtalk_checkin
 from startup_utils import setup_logging, ensure_data_dir, cleanup_stale_autostart
 from pet_window import PetWindow
 
-logger = setup_logging()
+logger = logging.getLogger("DesktopPet")
 
 
 def ensure_config(config_mgr: ConfigManager) -> None:
@@ -28,27 +29,30 @@ def ensure_config(config_mgr: ConfigManager) -> None:
 
 
 def main():
-    logger.info("=" * 40)
-    logger.info("Desktop Pet 启动")
-
-    app = QApplication(sys.argv)
-    app.setQuitOnLastWindowClosed(False)
-
-    # 启用高分屏DPI缩放
-    app.setAttribute(Qt.AA_EnableHighDpiScaling)
-    app.setAttribute(Qt.AA_UseHighDpiPixmaps)
-
     # 0. 确保数据目录存在（首次运行创建 data/ 并复制默认配置）
     ensure_data_dir()
-
-    # 0b. 清理失效的开机自启注册表条目（exe被移动后）
-    cleanup_stale_autostart()
 
     # 1. 初始化配置管理器
     config_mgr = ConfigManager()
     ensure_config(config_mgr)
     config = config_mgr.load()
+    logging_cfg = config.get("logging", {})
+    setup_logging(
+        level=logging_cfg.get("level", "INFO"),
+        log_file=logging_cfg.get("file", "logs/pet.log"),
+    )
+    logger.info("=" * 40)
+    logger.info("Desktop Pet 启动")
     logger.info(f"配置加载完成: pet={config.get('pet', {}).get('name', 'unknown')}")
+
+    # 1b. 清理失效的开机自启注册表条目（exe被移动后）
+    cleanup_stale_autostart()
+
+    # 高分屏属性必须在 QApplication 创建前设置
+    QApplication.setAttribute(Qt.AA_EnableHighDpiScaling)
+    QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps)
+    app = QApplication(sys.argv)
+    app.setQuitOnLastWindowClosed(False)
 
     # 2. 创建宠物窗口
     pet_window = PetWindow(config=config)

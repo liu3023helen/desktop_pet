@@ -39,6 +39,27 @@ class PetWindowModeTests(unittest.TestCase):
         self.assertFalse(self.window.wander_timer.isActive())
         self.assertEqual((self.window._velocity.x(), self.window._velocity.y()), (0, 0))
 
+    def test_full_application_config_controls_window_behavior(self):
+        self.window.bubble.close()
+        self.window.tray_icon.hide()
+        self.window.close()
+        self.window = PetWindow({
+            "pet": {"name": "Configured Pet"},
+            "ui": {
+                "window_size": 128,
+                "wander_speed_ms": 7,
+                "wander_x_range_ratio": 0.2,
+            },
+        })
+
+        self.assertEqual(self.window.windowTitle(), "Configured Pet")
+        self.assertEqual((self.window.width(), self.window.height()), (128, 128))
+        self.assertEqual(self.window._wander_x_range_ratio, 0.2)
+
+        self.window._toggle_quiet_mode(False)
+
+        self.assertEqual(self.window.wander_timer.interval(), 7)
+
 
 if __name__ == "__main__":
     unittest.main()

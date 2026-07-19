@@ -51,7 +51,7 @@ def main():
     logger.info(f"配置加载完成: pet={config.get('pet', {}).get('name', 'unknown')}")
 
     # 2. 创建宠物窗口
-    pet_window = PetWindow(config=config.get("pet", {}))
+    pet_window = PetWindow(config=config)
 
     # 2b. 检查素材完整性
     from startup_utils import check_assets

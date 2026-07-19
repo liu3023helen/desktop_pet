@@ -44,13 +44,15 @@ class PetWindow(QWidget):
     def __init__(self, config: dict = None):
         super().__init__()
         self.config = config or {}
+        nested_pet_cfg = self.config.get("pet")
+        self._pet_config = nested_pet_cfg if isinstance(nested_pet_cfg, dict) else self.config
         logger.info("初始化宠物窗口（安静模式）")
 
         # 窗口属性（从配置读取，兼容旧版无配置项）
         ui_cfg = self.config.get("ui", {}) if isinstance(self.config.get("ui"), dict) else {}
         window_size = ui_cfg.get("window_size", 256)
 
-        self.setWindowTitle(self.config.get("name", "Pet"))
+        self.setWindowTitle(self._pet_config.get("name", "Pet"))
         self.setFixedSize(window_size, window_size)
 
         # 无边框 + 透明 + 置顶 + 工具窗口（不在任务栏显示）

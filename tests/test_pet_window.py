@@ -393,6 +393,45 @@ class PetWindowModeTests(unittest.TestCase):
         self.assertEqual(self.window.bubble.text(), "First after unlock")
         play_sound.assert_called_once_with(None)
 
+        self.window._handle_bubble_action("acknowledge")
+
+        self.assertEqual(self.window._active_reminder["id"], "locked-second")
+        self.assertEqual(play_sound.call_count, 2)
+
+        self.window.set_session_locked(True)
+        self.window.set_session_locked(False)
+
+        self.assertEqual(play_sound.call_count, 2)
+
+    @patch("pet_window.play_reminder_sound")
+    def test_snooze_due_while_locked_sounds_once_after_unlock(self, play_sound):
+        self.window.trigger_reminder({
+            "id": "locked-snooze",
+            "name": "Snooze",
+            "message": "Snoozed reminder",
+            "action_type": "play_animation",
+            "animation": "cheer",
+            "sound": True,
+        })
+        self.window._handle_bubble_action("snooze_10")
+        self.window.set_session_locked(True)
+        self.now += timedelta(minutes=10)
+
+        self.window._process_pending_reminders()
+
+        self.assertIsNone(self.window._active_record)
+        self.assertEqual(play_sound.call_count, 1)
+
+        self.window.set_session_locked(False)
+
+        self.assertEqual(self.window._active_reminder["id"], "locked-snooze")
+        self.assertEqual(play_sound.call_count, 2)
+
+        self.window.set_session_locked(True)
+        self.window.set_session_locked(False)
+
+        self.assertEqual(play_sound.call_count, 2)
+
 
 if __name__ == "__main__":
     unittest.main()

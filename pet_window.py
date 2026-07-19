@@ -567,6 +567,8 @@ class PetWindow(QWidget):
         self._display_active_reminder()
 
     def _display_active_reminder(self, play_sound: bool = True) -> None:
+        if self._session_locked:
+            return
         reminder = self._active_reminder
         if reminder is None:
             return

@@ -42,6 +42,20 @@ def _validate_reminder(reminder: Any) -> Optional[str]:
     if parsed.strftime("%H:%M") != reminder_time:
         return "提醒时间必须使用两位 HH:MM 格式"
 
+    for field in ("enabled", "weekdays_only", "sound"):
+        if field in reminder and not isinstance(reminder[field], bool):
+            return f"{field} 必须是布尔值"
+
+    for field in ("action_type", "action_target", "animation", "message", "sound_file"):
+        if field in reminder and not isinstance(reminder[field], str):
+            return f"{field} 必须是字符串"
+
+    reminder_id = reminder.get("id")
+    if reminder_id is not None and (
+        not isinstance(reminder_id, str) or not reminder_id.strip()
+    ):
+        return "id 必须是非空字符串"
+
     return None
 
 

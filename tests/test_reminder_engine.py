@@ -36,6 +36,35 @@ class ReminderLoadingTests(unittest.TestCase):
 
         self.assertEqual(engine._reminders, [])
 
+    def test_invalid_optional_field_types_are_isolated(self):
+        valid = make_reminder(name="still valid")
+        engine = ReminderEngine({
+            "reminders": [
+                {
+                    "name": "bad message",
+                    "enabled": True,
+                    "time": "09:30",
+                    "message": ["not", "text"],
+                },
+                {
+                    "name": "bad action",
+                    "enabled": True,
+                    "time": "09:30",
+                    "action_type": ["notify_only"],
+                },
+                {
+                    "name": "bad boolean",
+                    "enabled": "yes",
+                    "time": "09:30",
+                },
+                valid,
+            ]
+        })
+
+        engine.load_reminders()
+
+        self.assertEqual(engine._reminders, [valid])
+
     def test_valid_reminder_still_triggers(self):
         engine = ReminderEngine({"reminders": [make_reminder()]})
         engine.load_reminders()

@@ -55,7 +55,8 @@ ui:
 # --- 提醒引擎配置 ---
 engine:
   check_interval_sec: 1            # 轮询检查间隔 (秒)
-  sleep_grace_period_sec: 60       # 休眠唤醒后的宽容期 (秒)
+  sleep_grace_period_sec: 60       # 首次启动检查的宽容期 (秒)
+  missed_reminder_retention_hours: 24 # 休眠唤醒后最多追溯时长 (小时)
 
 # --- 日志配置 ---
 logging:

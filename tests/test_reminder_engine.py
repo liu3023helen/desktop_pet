@@ -189,6 +189,47 @@ class ReminderDailyResetTests(unittest.TestCase):
         self.assertEqual(engine._snooze_mgr._skipped_today, set())
 
 
+class ReminderWakeRecoveryTests(unittest.TestCase):
+    def test_wake_scans_the_full_gap_and_fires_in_scheduled_order(self):
+        later = make_reminder(name="later", reminder_time="10:00")
+        earlier = make_reminder(name="earlier", reminder_time="09:30")
+        engine = ReminderEngine({"reminders": [later, earlier]})
+        engine.load_reminders()
+        clock = [datetime(2026, 7, 20, 9, 0, 0)]
+        engine.get_effective_now = lambda: clock[0]
+        fired = []
+        engine._trigger_reminder = lambda reminder: fired.append(
+            (reminder["name"], reminder["_triggered_at"])
+        )
+
+        engine._check_reminders()
+        clock[0] = datetime(2026, 7, 20, 11, 0, 0)
+        engine._check_reminders()
+
+        self.assertEqual(fired, [
+            ("earlier", "2026-07-20T09:30:00"),
+            ("later", "2026-07-20T10:00:00"),
+        ])
+
+    def test_wake_scan_keeps_only_occurrences_within_24_hours(self):
+        engine = ReminderEngine({
+            "reminders": [make_reminder(reminder_time="08:00")]
+        })
+        engine.load_reminders()
+        clock = [datetime(2026, 7, 20, 7, 0, 0)]
+        engine.get_effective_now = lambda: clock[0]
+        fired = []
+        engine._trigger_reminder = lambda reminder: fired.append(
+            reminder["_triggered_at"]
+        )
+
+        engine._check_reminders()
+        clock[0] = datetime(2026, 7, 21, 13, 0, 0)
+        engine._check_reminders()
+
+        self.assertEqual(fired, ["2026-07-21T08:00:00"])
+
+
 class ReminderEngineSettingsTests(unittest.TestCase):
     def test_engine_settings_control_interval_and_grace_window(self):
         engine = ReminderEngine({
@@ -196,6 +237,7 @@ class ReminderEngineSettingsTests(unittest.TestCase):
             "engine": {
                 "check_interval_sec": 0.25,
                 "sleep_grace_period_sec": 5,
+                "missed_reminder_retention_hours": 12,
             },
         })
         engine.load_reminders()
@@ -206,12 +248,14 @@ class ReminderEngineSettingsTests(unittest.TestCase):
         engine._check_reminders()
         self.assertEqual(fired, [])
         self.assertEqual(engine._check_interval_sec, 0.25)
+        self.assertEqual(engine._missed_reminder_retention_hours, 12)
 
         engine.reload_reminders({
             "reminders": [make_reminder(reminder_time="09:30")],
             "engine": {
                 "check_interval_sec": 0.5,
                 "sleep_grace_period_sec": 15,
+                "missed_reminder_retention_hours": 48,
             },
         })
         engine._check_reminders()
@@ -219,6 +263,7 @@ class ReminderEngineSettingsTests(unittest.TestCase):
         self.assertEqual(len(fired), 1)
         self.assertEqual(engine._check_interval_sec, 0.5)
         self.assertEqual(engine._sleep_grace_period_sec, 15)
+        self.assertEqual(engine._missed_reminder_retention_hours, 24)
 
     def test_invalid_engine_settings_use_safe_defaults(self):
         engine = ReminderEngine({
@@ -226,11 +271,13 @@ class ReminderEngineSettingsTests(unittest.TestCase):
             "engine": {
                 "check_interval_sec": "fast",
                 "sleep_grace_period_sec": None,
+                "missed_reminder_retention_hours": "forever",
             },
         })
 
         self.assertEqual(engine._check_interval_sec, 1.0)
         self.assertEqual(engine._sleep_grace_period_sec, 60)
+        self.assertEqual(engine._missed_reminder_retention_hours, 24)
 
 if __name__ == "__main__":
     unittest.main()

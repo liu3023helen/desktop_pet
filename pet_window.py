@@ -502,11 +502,20 @@ class PetWindow(QWidget):
     def trigger_reminder(self, reminder: dict) -> None:
         """Persist a reminder and enqueue it for FIFO presentation."""
         payload = dict(reminder)
+        triggered_at_value = payload.pop("_triggered_at", None)
         payload.setdefault("name", "提醒")
         payload.setdefault("message", f"{payload['name']}时间到了！")
         now = self._now_provider()
+        triggered_at = now
+        if isinstance(triggered_at_value, str):
+            try:
+                triggered_at = datetime.fromisoformat(triggered_at_value)
+            except ValueError:
+                logger.warning(
+                    f"忽略无效提醒触发时间: {triggered_at_value!r}"
+                )
         try:
-            record = self._pending_store.create_record(payload, now)
+            record = self._pending_store.create_record(payload, triggered_at)
         except (TypeError, ValueError) as error:
             logger.error(f"无法创建待处理提醒: {error}")
             return

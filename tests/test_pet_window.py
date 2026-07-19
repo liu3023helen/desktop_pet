@@ -298,6 +298,21 @@ class PetWindowModeTests(unittest.TestCase):
         self.assertEqual(self.window.bubble.mode, "reminder")
         self.assertEqual(self.window.bubble.text(), "Still pending")
 
+    def test_scheduled_trigger_time_is_used_for_persisted_fifo_order(self):
+        self.window.trigger_reminder({
+            "id": "scheduled",
+            "name": "Scheduled",
+            "message": "Scheduled message",
+            "action_type": "notify_only",
+            "sound": False,
+            "_triggered_at": "2026-07-20T09:30:00",
+        })
+
+        stored = self.store.load(now=self.now)
+
+        self.assertEqual(stored[0]["triggered_at"], "2026-07-20T09:30:00")
+        self.assertNotIn("_triggered_at", stored[0]["reminder"])
+
     def test_utility_result_waits_until_active_reminder_is_closed(self):
         self.window.trigger_reminder({
             "id": "priority",

@@ -102,6 +102,8 @@ class ReminderEngine(QThread):
         self._triggered_today: set = set()
         # 上次检查的日期，用于跨天重置
         self._last_check_date: Optional[str] = None
+        # 上次实际检查时间，用于休眠唤醒后的漏提醒扫描
+        self._last_check_at: Optional[datetime] = None
 
         # --- 二期新增 ---
         # 网络时间偏移量（秒），NTP时间 - 本地时间
@@ -139,6 +141,9 @@ class ReminderEngine(QThread):
         self._sleep_grace_period_sec = int(_bounded_number(
             engine_cfg.get("sleep_grace_period_sec"), 60, 0, 3600
         ))
+        self._missed_reminder_retention_hours = int(_bounded_number(
+            engine_cfg.get("missed_reminder_retention_hours"), 24, 1, 24
+        ))
 
     def load_reminders(self) -> None:
         """从配置加载提醒"""
@@ -172,6 +177,7 @@ class ReminderEngine(QThread):
         set_holiday_override(new_config.get("holidays", {}))
         self._load_engine_settings(new_config)
         self.load_reminders()
+        self._last_check_at = None
 
     def start(self, priority=QThread.InheritPriority) -> None:
         """Start with a fresh stop event before the worker can run."""
@@ -201,6 +207,16 @@ class ReminderEngine(QThread):
         """检查是否需要触发提醒"""
         now = self.get_effective_now()
         today_key = _date_key(now)
+        if self._last_check_at is None or now < self._last_check_at:
+            window_start = now - timedelta(
+                seconds=self._sleep_grace_period_sec
+            )
+        else:
+            retention_start = now - timedelta(
+                hours=self._missed_reminder_retention_hours
+            )
+            window_start = max(self._last_check_at, retention_start)
+        self._last_check_at = now
 
         # 跨天检测：日期变化时清空已触发记录和临时状态
         if self._last_check_date is None:
@@ -212,6 +228,7 @@ class ReminderEngine(QThread):
                 self._snooze_mgr.reset_daily(now)
             self._last_check_date = today_key
 
+        due_reminders = []
         for reminder_index, reminder in enumerate(self._reminders):
             if not reminder.get("enabled", False):
                 continue
@@ -220,10 +237,6 @@ class ReminderEngine(QThread):
             reminder_identity = self._runtime_identities[id(reminder)]
             reminder_time = reminder.get("time", "")
             if not reminder_time:
-                continue
-
-            # --- 二期：工作日判断 ---
-            if reminder.get("weekdays_only", False) and not is_workday_from_datetime(now):
                 continue
 
             # --- 二期：状态检查（加锁保护）---
@@ -252,23 +265,46 @@ class ReminderEngine(QThread):
                 logger.warning(f"无效的时间格式: {reminder_time}")
                 continue
 
-            current_time_key = _trigger_key(reminder, reminder_index, today_key)
+            candidate_date = window_start.date()
+            while candidate_date <= now.date():
+                scheduled_at = datetime.combine(
+                    candidate_date,
+                    parsed_time.time(),
+                )
+                candidate_date += timedelta(days=1)
+                scheduled_minute_end = scheduled_at + timedelta(minutes=1)
+                if not (
+                    scheduled_at <= now
+                    and scheduled_minute_end > window_start
+                ):
+                    continue
+                if (
+                    reminder.get("weekdays_only", False)
+                    and not is_workday_from_datetime(scheduled_at)
+                ):
+                    continue
 
-            # 检查是否已到时间且今天未触发
-            # 休眠唤醒容错：检查当前时间及过去 60 秒内是否有未触发的提醒
-            triggered = False
-            for offset in range(self._sleep_grace_period_sec + 1):
-                check_time = now - timedelta(seconds=offset)
-                if check_time.hour == h and check_time.minute == m:
-                    with self._lock:
-                        if current_time_key not in self._triggered_today:
-                            self._triggered_today.add(current_time_key)
-                            triggered = True
-                    break
+                trigger_key = _trigger_key(
+                    reminder,
+                    reminder_index,
+                    _date_key(scheduled_at),
+                )
+                with self._lock:
+                    if trigger_key in self._triggered_today:
+                        continue
+                    self._triggered_today.add(trigger_key)
+                due_reminders.append(
+                    (scheduled_at, reminder_index, reminder, reminder_name)
+                )
 
-            if triggered:
-                logger.info(f"触发提醒: {reminder_name}")
+        due_reminders.sort(key=lambda item: (item[0], item[1]))
+        for scheduled_at, _, reminder, reminder_name in due_reminders:
+            logger.info(f"触发提醒: {reminder_name}")
+            reminder["_triggered_at"] = scheduled_at.isoformat(timespec="seconds")
+            try:
                 self._trigger_reminder(reminder)
+            finally:
+                reminder.pop("_triggered_at", None)
 
     def _trigger_reminder(self, reminder: Dict[str, Any]) -> None:
         """触发单个提醒"""

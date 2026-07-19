@@ -1,5 +1,5 @@
 import unittest
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from reminder_engine import ReminderEngine
 
@@ -79,6 +79,30 @@ class ReminderDeduplicationTests(unittest.TestCase):
         engine._check_reminders()
 
         self.assertEqual(fired, [first, second])
+
+
+class ReminderSnoozeTests(unittest.TestCase):
+    def test_snoozed_reminder_triggers_once_when_due(self):
+        engine = ReminderEngine({"reminders": [make_reminder()]})
+        engine.load_reminders()
+        clock = [datetime(2026, 7, 20, 9, 30, 10)]
+        engine.get_effective_now = lambda: clock[0]
+        fired = []
+        engine._trigger_reminder = lambda reminder: fired.append(clock[0])
+
+        engine.handle_snooze("valid", 5)
+        clock[0] += timedelta(minutes=4, seconds=59)
+        engine._check_reminders()
+        self.assertEqual(fired, [])
+
+        clock[0] += timedelta(seconds=1)
+        engine._check_reminders()
+        engine._check_reminders()
+
+        self.assertEqual(fired, [datetime(2026, 7, 20, 9, 35, 10)])
+        self.assertIsNone(
+            engine._snooze_mgr.get_snooze_time("valid", now=clock[0])
+        )
 
 
 if __name__ == "__main__":

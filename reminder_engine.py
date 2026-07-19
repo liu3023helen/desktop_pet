@@ -182,17 +182,16 @@ class ReminderEngine(QThread):
 
             # --- 二期：状态检查（加锁保护）---
             with self._lock:
-                skipped = self._snooze_mgr.is_skipped(reminder_name)
-                completed = self._snooze_mgr.is_completed(reminder_name)
-                snoozed = self._snooze_mgr.is_snoozed(reminder_name, now=now)
-                should_snooze_trigger = self._snooze_mgr.should_trigger_snooze(reminder_name, now=now) if snoozed else False
+                skipped = self._snooze_mgr.is_skipped(reminder_name, now=now)
+                completed = self._snooze_mgr.is_completed(reminder_name, now=now)
+                snooze_time = self._snooze_mgr.get_snooze_time(reminder_name, now=now)
 
             if skipped or completed:
                 continue
 
             # --- 二期：贪睡检查 ---
-            if snoozed:
-                if should_snooze_trigger:
+            if snooze_time is not None:
+                if now >= snooze_time:
                     with self._lock:
                         self._snooze_mgr.clear_snooze(reminder_name)
                     logger.info(f"贪睡提醒触发: {reminder_name}")

@@ -8,6 +8,14 @@ from PyQt5.QtWidgets import QApplication
 from bubble_widget import BubbleWidget
 
 
+class _PetStub:
+    def __init__(self, geometry):
+        self._geometry = geometry
+
+    def geometry(self):
+        return self._geometry
+
+
 class BubbleSizingTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -33,6 +41,21 @@ class BubbleSizingTests(unittest.TestCase):
 
         self.assertLess(self.bubble.height(), long_height)
         self.assertEqual(self.bubble.height(), 70)
+
+    def test_bubble_position_stays_inside_available_screen(self):
+        screen = QApplication.primaryScreen().availableGeometry()
+        self.bubble._pet_window = _PetStub(screen)
+
+        self.bubble.show_bubble("边界", 1000)
+
+        self.assertGreaterEqual(self.bubble.x(), screen.left())
+        self.assertGreaterEqual(self.bubble.y(), screen.top())
+        self.assertLessEqual(
+            self.bubble.x() + self.bubble.width(), screen.right() + 1
+        )
+        self.assertLessEqual(
+            self.bubble.y() + self.bubble.height(), screen.bottom() + 1
+        )
 
 
 if __name__ == "__main__":

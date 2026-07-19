@@ -104,14 +104,19 @@ class BubbleWidget(QLabel):
         x = pet_geo.x() + (pet_geo.width() - bubble_w) // 2
         y = pet_geo.y() - bubble_h - 8
 
-        if y < 5:
+        screen_obj = QApplication.screenAt(pet_geo.center()) or QApplication.primaryScreen()
+        screen = screen_obj.availableGeometry()
+        if y < screen.top():
             y = pet_geo.y() + pet_geo.height() + 8
 
-        screen = QApplication.primaryScreen().geometry()
-        if x + bubble_w > screen.right():
-            x = screen.right() - bubble_w - 5
-        if x < 5:
-            x = 5
+        if x + bubble_w > screen.right() + 1:
+            x = screen.right() + 1 - bubble_w
+        if x < screen.left():
+            x = screen.left()
+        if y + bubble_h > screen.bottom() + 1:
+            y = screen.bottom() + 1 - bubble_h
+        if y < screen.top():
+            y = screen.top()
 
         self.move(x, y)
 

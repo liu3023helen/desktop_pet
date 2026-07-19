@@ -6,7 +6,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt5.QtWidgets import QApplication
 
-from pet_window import PetWindow
+from pet_window import PetWindow, clamp_to_available_screen
 
 
 class PetWindowModeTests(unittest.TestCase):
@@ -85,6 +85,21 @@ class PetWindowModeTests(unittest.TestCase):
 
         engine.handle_snooze.assert_called_once_with("Task", 10)
         self.assertEqual(self.window._interaction_dialogs, [])
+
+    def test_window_is_clamped_to_available_screen(self):
+        screen = QApplication.primaryScreen().availableGeometry()
+        self.window.move(screen.right() + 500, screen.bottom() + 500)
+
+        clamp_to_available_screen(self.window)
+
+        self.assertGreaterEqual(self.window.x(), screen.left())
+        self.assertGreaterEqual(self.window.y(), screen.top())
+        self.assertLessEqual(
+            self.window.x() + self.window.width(), screen.right() + 1
+        )
+        self.assertLessEqual(
+            self.window.y() + self.window.height(), screen.bottom() + 1
+        )
 
 
 if __name__ == "__main__":

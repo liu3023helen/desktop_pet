@@ -20,18 +20,23 @@ from startup_utils import is_auto_start_enabled, set_auto_start, play_reminder_s
 
 logger = logging.getLogger(__name__)
 
-# 宠物闲逛时底部预留像素（为任务栏留出空间，避免被遮挡）
-TASKBAR_RESERVE_PX = 50
+def _available_geometry_for(window: QWidget):
+    screen = QApplication.screenAt(window.frameGeometry().center())
+    if screen is None:
+        screen = QApplication.primaryScreen()
+    return screen.availableGeometry()
 
 
-def clamp_to_primary_screen(window: QWidget) -> None:
-    """确保窗口在主显示器范围内，防止跑到副屏消失"""
-    screen = QApplication.primaryScreen().geometry()
+def clamp_to_available_screen(window: QWidget) -> None:
+    """Keep a window inside the usable area of its nearest screen."""
+    screen = _available_geometry_for(window)
     pos = window.pos()
     size = window.size()
 
-    new_x = max(screen.left(), min(pos.x(), screen.right() - size.width()))
-    new_y = max(screen.top(), min(pos.y(), screen.bottom() - size.height()))
+    max_x = screen.right() - size.width() + 1
+    max_y = screen.bottom() - size.height() + 1
+    new_x = max(screen.left(), min(pos.x(), max_x))
+    new_y = max(screen.top(), min(pos.y(), max_y))
 
     if pos.x() != new_x or pos.y() != new_y:
         window.move(new_x, new_y)
@@ -119,13 +124,12 @@ class PetWindow(QWidget):
         logger.info("宠物窗口初始化完成（安静模式，右下角静止）")
 
     def _move_to_corner(self):
-        """移动到屏幕右下角（安静模式位置），确保在主屏范围内"""
-        screen = QApplication.primaryScreen().geometry()
-        x = screen.width() - self.width() - 20   # 距右边20px
-        y = screen.height() - self.height() - 60  # 距底部60px（避开任务栏）
+        """Move to the bottom-right of the current screen's usable area."""
+        screen = _available_geometry_for(self)
+        x = screen.right() - self.width() + 1 - 20
+        y = screen.bottom() - self.height() + 1 - 20
         self.move(x, y)
-        # 多显示器适配：确保窗口不会跑到副屏
-        clamp_to_primary_screen(self)
+        clamp_to_available_screen(self)
         logger.debug(f"宠物移至右下角: ({x}, {y})")
 
     def _show_static_frame(self):
@@ -373,13 +377,13 @@ class PetWindow(QWidget):
 
     def _wander_step(self):
         """闲逛步进逻辑 — 限制在屏幕中央区域活动"""
-        screen = QApplication.primaryScreen().geometry()
+        screen = _available_geometry_for(self)
         new_x = self.x() + self._velocity.x()
         new_y = self.y() + self._velocity.y()
 
         # 限制X轴活动范围：屏幕中央的 wander_x_range_ratio 宽度
         range_w = int(screen.width() * self._wander_x_range_ratio)
-        center_x = screen.width() // 2
+        center_x = screen.left() + screen.width() // 2
         x_min = center_x - range_w // 2
         x_max = center_x + range_w // 2 - self.width()
 
@@ -388,11 +392,11 @@ class PetWindow(QWidget):
             new_x = max(x_min, min(new_x, x_max))
 
         # 限制Y轴范围（底部预留任务栏空间）
-        if new_y < 0:
-            new_y = 0
+        if new_y < screen.top():
+            new_y = screen.top()
             self._velocity.setY(abs(self._velocity.y()))
-        elif new_y + self.height() > screen.height() - TASKBAR_RESERVE_PX:
-            new_y = screen.height() - TASKBAR_RESERVE_PX - self.height()
+        elif new_y + self.height() > screen.bottom() + 1:
+            new_y = screen.bottom() + 1 - self.height()
             self._velocity.setY(-abs(self._velocity.y()))
 
         self.move(new_x, new_y)
@@ -417,9 +421,9 @@ class PetWindow(QWidget):
             self._enter_active_mode()
 
             # 2. 移动到屏幕正中央
-            screen = QApplication.primaryScreen().geometry()
-            center_x = screen.width() // 2 - self.width() // 2
-            center_y = screen.height() // 2 - self.height() // 2
+            screen = _available_geometry_for(self)
+            center_x = screen.left() + (screen.width() - self.width()) // 2
+            center_y = screen.top() + (screen.height() - self.height()) // 2
             self.move(center_x, center_y)
 
             # 3. 切换动画
@@ -478,6 +482,7 @@ class PetWindow(QWidget):
 
     def mouseReleaseEvent(self, event):
         self._drag_pos = None
+        clamp_to_available_screen(self)
 
     # --- 右键菜单 ---
     def contextMenuEvent(self, event):

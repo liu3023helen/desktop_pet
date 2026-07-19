@@ -108,6 +108,7 @@ def main():
     logger.info("宠物窗口已显示")
 
     session_monitor = SessionMonitor()
+    session_monitor.lock_state_changed.connect(pet_window.set_session_locked)
     session_monitor.start()
 
     exit_code = app.exec_()

@@ -143,6 +143,7 @@ class PetWindow(QWidget):
         self._active_record = None
         self._active_reminder = None
         self._deferred_bubble = None
+        self._session_locked = False
         self.pending_reminder_timer = QTimer(self)
         self.pending_reminder_timer.setInterval(1000)
         self.pending_reminder_timer.timeout.connect(
@@ -447,19 +448,23 @@ class PetWindow(QWidget):
         logger.info(f"[Weather] bubble after show: visible={self.bubble.isVisible()}")
 
     def _show_loading_bubble(self, message: str) -> None:
-        if self._active_record is not None:
+        if self._active_record is not None or self._session_locked:
             self._deferred_bubble = ("loading", message)
             return
         self.bubble.show_loading(message)
 
     def _show_result_bubble(self, message: str) -> None:
-        if self._active_record is not None:
+        if self._active_record is not None or self._session_locked:
             self._deferred_bubble = ("result", message)
             return
         self.bubble.show_result(message)
 
     def _show_deferred_bubble(self) -> None:
-        if self._active_record is not None or self._deferred_bubble is None:
+        if (
+            self._active_record is not None
+            or self._session_locked
+            or self._deferred_bubble is None
+        ):
             return
         mode, message = self._deferred_bubble
         self._deferred_bubble = None
@@ -527,7 +532,7 @@ class PetWindow(QWidget):
         return snooze_until <= now
 
     def _process_pending_reminders(self) -> None:
-        if self._active_record is not None:
+        if self._active_record is not None or self._session_locked:
             return
 
         now = self._now_provider()
@@ -552,7 +557,7 @@ class PetWindow(QWidget):
             logger.error(f"更新待处理提醒状态失败: {error}")
         self._display_active_reminder()
 
-    def _display_active_reminder(self) -> None:
+    def _display_active_reminder(self, play_sound: bool = True) -> None:
         reminder = self._active_reminder
         if reminder is None:
             return
@@ -582,7 +587,7 @@ class PetWindow(QWidget):
                 self.animation_player.play(self._default_animation, fps=3, loop=True)
 
         # 4. 播放提示音（支持每个提醒使用不同的音效文件）
-        if sound_enabled:
+        if sound_enabled and play_sound:
             sound_file = reminder.get("sound_file", "")
             play_reminder_sound(sound_file if sound_file else None)
 
@@ -634,6 +639,25 @@ class PetWindow(QWidget):
         self.bubble.hide_bubble()
         self._enter_quiet_mode()
         self._process_pending_reminders()
+
+    @pyqtSlot(bool)
+    def set_session_locked(self, locked: bool) -> None:
+        locked = bool(locked)
+        if locked == self._session_locked:
+            return
+        self._session_locked = locked
+
+        if locked:
+            self.bubble.hide_bubble()
+            self._enter_quiet_mode()
+            logger.info("会话已锁定，暂停提醒展示")
+            return
+
+        logger.info("会话已解锁，恢复待处理提醒")
+        if self._active_record is not None:
+            self._display_active_reminder(play_sound=False)
+        else:
+            self._process_pending_reminders()
 
     # --- 鼠标拖拽 ---
     def mousePressEvent(self, event):

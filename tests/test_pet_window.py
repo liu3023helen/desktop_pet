@@ -317,6 +317,67 @@ class PetWindowModeTests(unittest.TestCase):
         self.assertEqual(self.window.bubble.mode, "result")
         self.assertEqual(self.window.bubble.text(), "天气查询完成")
 
+    @patch("pet_window.play_reminder_sound")
+    def test_lock_hides_active_reminder_and_unlock_resumes_without_sound(
+        self,
+        play_sound,
+    ):
+        self.window.trigger_reminder({
+            "id": "active-at-lock",
+            "name": "Active",
+            "message": "Resume me",
+            "action_type": "play_animation",
+            "animation": "cheer",
+            "sound": True,
+        })
+        self.assertEqual(play_sound.call_count, 1)
+
+        self.window.set_session_locked(True)
+
+        self.assertEqual(self.window.bubble.mode, "hidden")
+        self.assertTrue(self.window._quiet_mode)
+        self.assertIsNotNone(self.window._active_record)
+
+        self.window.set_session_locked(False)
+
+        self.assertEqual(self.window.bubble.mode, "reminder")
+        self.assertEqual(self.window.bubble.text(), "Resume me")
+        self.assertFalse(self.window._quiet_mode)
+        self.assertEqual(play_sound.call_count, 1)
+
+    @patch("pet_window.play_reminder_sound")
+    def test_reminders_triggered_while_locked_wait_for_unlock(self, play_sound):
+        self.window.set_session_locked(True)
+
+        self.window.trigger_reminder({
+            "id": "locked-first",
+            "name": "First",
+            "message": "First after unlock",
+            "action_type": "play_animation",
+            "animation": "cheer",
+            "sound": True,
+        })
+        self.window.trigger_reminder({
+            "id": "locked-second",
+            "name": "Second",
+            "message": "Second after unlock",
+            "action_type": "play_animation",
+            "animation": "cheer",
+            "sound": True,
+        })
+
+        self.assertIsNone(self.window._active_record)
+        self.assertEqual(self.window.bubble.mode, "hidden")
+        self.assertTrue(self.window._quiet_mode)
+        self.assertEqual(len(self.store.load(now=self.now)), 2)
+        play_sound.assert_not_called()
+
+        self.window.set_session_locked(False)
+
+        self.assertEqual(self.window._active_reminder["id"], "locked-first")
+        self.assertEqual(self.window.bubble.text(), "First after unlock")
+        play_sound.assert_called_once_with(None)
+
 
 if __name__ == "__main__":
     unittest.main()

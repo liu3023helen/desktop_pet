@@ -286,16 +286,20 @@ class PetWindow(QWidget):
         """手动触发网络时间校准"""
         try:
             from time_sync import TimeSyncService
+            config = self._config_mgr.load() if self._config_mgr else self.config
+            time_sync_cfg = config.get("time_sync", {})
+            server = time_sync_cfg.get("ntp_server", "ntp.aliyun.com")
+            tolerance = time_sync_cfg.get("tolerance_seconds", 30)
             self.tray_icon.showMessage("时间校准中", "正在获取网络时间...", QSystemTrayIcon.Information, 2000)
 
             def do_sync():
-                service = TimeSyncService()
+                service = TimeSyncService(server=server)
                 offset = service.sync_once()
                 if offset is not None:
                     if self._engine is not None:
                         self._engine.set_time_offset(offset)
                     abs_offset = abs(offset)
-                    if abs_offset > 30:
+                    if abs_offset > tolerance:
                         msg = f"时间偏差较大：{offset:.1f}秒，已自动校准"
                     else:
                         msg = f"时间已校准，偏差：{offset:.1f}秒"

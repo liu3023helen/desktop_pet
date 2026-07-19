@@ -14,6 +14,7 @@ from dingtalk_handler import open_dingtalk_checkin
 from startup_utils import setup_logging, ensure_data_dir, cleanup_stale_autostart
 from pet_window import PetWindow
 from session_monitor import SessionMonitor
+from single_instance import SingleInstanceGuard
 
 logger = logging.getLogger("DesktopPet")
 
@@ -54,6 +55,11 @@ def main():
     QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps)
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
+
+    instance_guard = SingleInstanceGuard()
+    if not instance_guard.acquire():
+        logger.info("已有 Desktop Pet 实例正在运行，本次启动退出")
+        return
 
     # 2. 创建宠物窗口
     pet_window = PetWindow(config=config)
@@ -104,6 +110,7 @@ def main():
         logger.debug("时间同步模块未就绪，跳过自动校准")
 
     # 4. 显示宠物窗口
+    instance_guard.activation_requested.connect(pet_window.activate_from_launch)
     pet_window.show()
     logger.info("宠物窗口已显示")
 
@@ -116,6 +123,7 @@ def main():
     # 清理
     session_monitor.stop()
     engine.stop()
+    instance_guard.release()
     logger.info("程序退出")
 
     sys.exit(exit_code)

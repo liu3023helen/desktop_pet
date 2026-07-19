@@ -294,6 +294,15 @@ class PetWindow(QWidget):
         self.tray_icon.hide()
         QApplication.quit()
 
+    @pyqtSlot()
+    def activate_from_launch(self) -> None:
+        """Bring the existing instance forward after a repeated launch."""
+        self.show()
+        self.raise_()
+        if self.bubble.isVisible():
+            self.bubble.raise_()
+        logger.info("已有宠物窗口已响应重复启动请求")
+
     # --- 二期新增方法 ---
     def _open_reminder_dialog(self):
         """打开闹钟管理面板"""

@@ -9,7 +9,7 @@ import yaml
 from pathlib import Path
 from typing import Dict, Any, Optional
 
-from utils import get_app_dir
+from utils import get_app_dir, get_resource_path
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +56,16 @@ class ConfigManager:
         return _deep_merge(defaults, config)
 
     def _default_config(self) -> Dict[str, Any]:
+        template_path = get_resource_path("config.yaml")
+        try:
+            with open(template_path, "r", encoding="utf-8") as f:
+                template = yaml.safe_load(f) or {}
+            if isinstance(template, dict):
+                return template
+            logger.error(f"默认配置模板必须是对象: {template_path}")
+        except Exception as e:
+            logger.error(f"加载默认配置模板失败: {e}")
+
         return {
             "pet": {
                 "name": "小新",

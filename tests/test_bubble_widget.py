@@ -3,7 +3,7 @@ import unittest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PyQt5.QtWidgets import QApplication
+from PyQt5.QtWidgets import QApplication, QPushButton
 
 from bubble_widget import BubbleWidget
 
@@ -56,6 +56,42 @@ class BubbleSizingTests(unittest.TestCase):
         self.assertLessEqual(
             self.bubble.y() + self.bubble.height(), screen.bottom() + 1
         )
+
+    def test_loading_mode_is_persistent_and_has_no_actions(self):
+        self.bubble.show_loading("正在获取天气...")
+
+        self.assertEqual(self.bubble.mode, "loading")
+        self.assertFalse(self.bubble._hide_timer.isActive())
+        self.assertTrue(self.bubble._actions_widget.isHidden())
+
+    def test_result_mode_uses_eight_second_default(self):
+        self.bubble.show_result("天气获取成功")
+
+        self.assertEqual(self.bubble.mode, "result")
+        self.assertTrue(self.bubble._hide_timer.isActive())
+        self.assertEqual(self.bubble._hide_timer.interval(), 8000)
+        self.assertTrue(self.bubble._actions_widget.isHidden())
+
+    def test_reminder_mode_is_persistent_and_emits_actions(self):
+        emitted = []
+        self.bubble.action_triggered.connect(emitted.append)
+        self.bubble.show_reminder("该打卡啦~")
+
+        self.assertEqual(self.bubble.mode, "reminder")
+        self.assertFalse(self.bubble._hide_timer.isActive())
+        self.assertFalse(self.bubble._actions_widget.isHidden())
+
+        self.bubble.findChild(QPushButton, "bubble_snooze_button").click()
+        self.bubble.findChild(QPushButton, "bubble_acknowledge_button").click()
+
+        self.assertEqual(emitted, ["snooze_10", "acknowledge"])
+
+    def test_switching_from_reminder_to_result_hides_actions(self):
+        self.bubble.show_reminder("提醒")
+        self.bubble.show_result("处理完成")
+
+        self.assertEqual(self.bubble.mode, "result")
+        self.assertTrue(self.bubble._actions_widget.isHidden())
 
 
 if __name__ == "__main__":

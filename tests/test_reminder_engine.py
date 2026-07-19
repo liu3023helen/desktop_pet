@@ -125,5 +125,23 @@ class ReminderThreadLifecycleTests(unittest.TestCase):
         self.assertFalse(engine.isRunning())
 
 
+class ReminderDailyResetTests(unittest.TestCase):
+    def test_first_check_initializes_date_and_next_day_clears_state(self):
+        engine = ReminderEngine({"reminders": []})
+        clock = [datetime(2026, 7, 20, 23, 59, 59)]
+        engine.get_effective_now = lambda: clock[0]
+
+        engine._check_reminders()
+        self.assertEqual(engine._last_check_date, "2026-07-20")
+
+        engine._triggered_today.add("old-trigger")
+        engine._snooze_mgr.skip_today("old-reminder")
+        clock[0] += timedelta(seconds=2)
+        engine._check_reminders()
+
+        self.assertEqual(engine._last_check_date, "2026-07-21")
+        self.assertEqual(engine._triggered_today, set())
+        self.assertEqual(engine._snooze_mgr._skipped_today, set())
+
 if __name__ == "__main__":
     unittest.main()

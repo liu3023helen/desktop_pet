@@ -169,7 +169,9 @@ class ReminderEngine(QThread):
         today_key = _date_key(now)
 
         # 跨天检测：日期变化时清空已触发记录和临时状态
-        if self._last_check_date is not None and today_key != self._last_check_date:
+        if self._last_check_date is None:
+            self._last_check_date = today_key
+        elif today_key != self._last_check_date:
             logger.info(f"日期变更: {self._last_check_date} -> {today_key}，重置触发记录")
             with self._lock:
                 self._triggered_today.clear()

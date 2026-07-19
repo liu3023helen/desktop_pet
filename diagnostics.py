@@ -8,6 +8,10 @@ import threading
 from pathlib import Path
 from typing import Callable, Dict, List, Tuple
 
+from PyQt5.QtCore import QCoreApplication, QObject, Qt, pyqtSignal, pyqtSlot
+
+from time_sync import TimeSyncService
+
 logger = logging.getLogger(__name__)
 
 # 需要检查的动画目录（至少 cheer 必须存在）
@@ -151,10 +155,9 @@ def check_config(config_mgr) -> Tuple[bool, List[str], List[str]]:
 def probe_tcp(host: str, port: int, timeout: float = 3.0) -> bool:
     """尝试 TCP 连接探测（非 NTP 协议，仅测试可达性）"""
     try:
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(timeout)
-        result = sock.connect_ex((host, port))
-        sock.close()
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.settimeout(timeout)
+            result = sock.connect_ex((host, port))
         return result == 0
     except socket.error:
         return False
@@ -171,7 +174,8 @@ def check_ntp_servers(servers: List[Tuple[str, int]] = None) -> Tuple[str, bool]
         servers = NTP_SERVERS
 
     for host, port in servers:
-        if probe_tcp(host, port):
+        service = TimeSyncService(server=host)
+        if service._query_ntp(host) is not None:
             logger.info(f"NTP 探测成功: {host}:{port}")
             return f"{host}:{port}", True
 
@@ -256,8 +260,6 @@ def run_diagnostics(config_mgr=None, callback: Callable[[str, bool, list], None]
 
     # 汇总
     title = "自检完成 - 全部正常" if all_ok else "自检完成 - 发现问题"
-    summary = f"{'全部通过' if all_ok else '存在问题'} - {'; '.join(results[:4])}"
-
     logger.info(f"自检完成: {'OK' if all_ok else 'WARN'}, 详情: {results}")
 
     # 回调（在主线程执行）
@@ -265,13 +267,33 @@ def run_diagnostics(config_mgr=None, callback: Callable[[str, bool, list], None]
         callback(title, all_ok, results)
 
 
-def run_diagnostics_async(config_mgr=None, callback: Callable[[str, bool, list], None] = None) -> None:
+class _DiagnosticsCallbackDispatcher(QObject):
+    requested = pyqtSignal(str, bool, list)
+
+    def __init__(self, callback, parent=None):
+        super().__init__(parent)
+        self._callback = callback
+        self.requested.connect(self._deliver, Qt.QueuedConnection)
+
+    @pyqtSlot(str, bool, list)
+    def _deliver(self, title: str, success: bool, lines: list) -> None:
+        self._callback(title, success, lines)
+
+
+def run_diagnostics_async(config_mgr=None, callback: Callable[[str, bool, list], None] = None):
     """异步运行自检（推荐方式，不阻塞主线程）"""
+    effective_callback = callback
+    app = QCoreApplication.instance()
+    if callback is not None and app is not None:
+        dispatcher = _DiagnosticsCallbackDispatcher(callback, parent=app)
+        effective_callback = dispatcher.requested.emit
+
     thread = threading.Thread(
         target=run_diagnostics,
-        args=(config_mgr, callback),
+        args=(config_mgr, effective_callback),
         daemon=True,
         name="DiagnosticsThread"
     )
     thread.start()
     logger.info("自检已在后台启动")
+    return thread

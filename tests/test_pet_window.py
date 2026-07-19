@@ -126,6 +126,42 @@ class PetWindowModeTests(unittest.TestCase):
         self.assertIs(self.window._diagnostics_thread, worker)
         self.assertIs(run_async.call_args.args[0], config_manager)
         self.assertTrue(callable(run_async.call_args.args[1]))
+        self.assertEqual(self.window.bubble.mode, "loading")
+        self.assertEqual(self.window.bubble.text(), "正在运行自检...")
+
+        callback = run_async.call_args.args[1]
+        callback("自检完成", True, ["配置正常", "素材正常"])
+        self.assertEqual(self.window.bubble.mode, "result")
+        self.assertIn("自检完成", self.window.bubble.text())
+
+    def test_weather_query_starts_with_loading_bubble(self):
+        self.window._config_mgr = Mock()
+        self.window._config_mgr.load.return_value = {
+            "weather": {"enabled": True, "city": "北京"}
+        }
+
+        with patch("threading.Thread") as thread_type:
+            self.window._show_weather()
+
+        thread_type.assert_called_once()
+        self.assertEqual(self.window.bubble.mode, "loading")
+        self.assertEqual(self.window.bubble.text(), "正在获取 北京 的天气...")
+
+    def test_time_sync_starts_with_loading_bubble(self):
+        self.window._config_mgr = Mock()
+        self.window._config_mgr.load.return_value = {
+            "time_sync": {
+                "ntp_server": "ntp.aliyun.com",
+                "tolerance_seconds": 30,
+            }
+        }
+
+        with patch("threading.Thread") as thread_type:
+            self.window._sync_time_now()
+
+        thread_type.assert_called_once()
+        self.assertEqual(self.window.bubble.mode, "loading")
+        self.assertEqual(self.window.bubble.text(), "正在校准网络时间...")
 
     def test_configured_default_animation_is_used(self):
         self.window.bubble.close()

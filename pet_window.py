@@ -220,7 +220,6 @@ class PetWindow(QWidget):
 
     def _toggle_quiet_mode(self, checked):
         """切换安静模式"""
-        self._quiet_mode = checked
         self._quiet_action.setChecked(checked)
         if checked:
             self._enter_quiet_mode()

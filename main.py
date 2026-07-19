@@ -13,6 +13,7 @@ from config_manager import ConfigManager
 from dingtalk_handler import open_dingtalk_checkin
 from startup_utils import setup_logging, ensure_data_dir, cleanup_stale_autostart
 from pet_window import PetWindow
+from session_monitor import SessionMonitor
 
 logger = logging.getLogger("DesktopPet")
 
@@ -106,9 +107,13 @@ def main():
     pet_window.show()
     logger.info("宠物窗口已显示")
 
+    session_monitor = SessionMonitor()
+    session_monitor.start()
+
     exit_code = app.exec_()
 
     # 清理
+    session_monitor.stop()
     engine.stop()
     logger.info("程序退出")
 

@@ -4,7 +4,6 @@
 """
 import logging
 import sys
-import weakref
 from pathlib import Path
 
 from PyQt5.QtWidgets import (
@@ -117,12 +116,13 @@ class PetWindow(QWidget):
             pet_window=self,
             max_width=ui_cfg.get("bubble_max_width", 300),
         )
+        self.bubble.action_triggered.connect(self._handle_bubble_action)
 
         # 配置管理器引用（由外部设置）
         self._config_mgr = None
         # 提醒引擎引用（由外部设置）
         self._engine = None
-        self._interaction_dialogs = []
+        self._active_reminder = None
         self._weather_service = None
         self._weather_service_config = None
         self._diagnostics_thread = None
@@ -481,37 +481,34 @@ class PetWindow(QWidget):
             sound_file = reminder.get("sound_file", "")
             play_reminder_sound(sound_file if sound_file else None)
 
-        # 5. 漫画气泡展示提醒文案（同时保留托盘通知作为辅助）
-        ui_cfg = self.config.get("ui", {})
-        bubble_dur = ui_cfg.get("bubble_duration_ms", 8000)
-        self.bubble.show_bubble(message, duration_ms=bubble_dur)
-        self.tray_icon.showMessage(name, message, QSystemTrayIcon.Information, 5000)
-        self._show_reminder_interaction(reminder)
+        # 5. 提醒气泡和动画保持显示，直到用户选择操作
+        self._active_reminder = dict(reminder)
+        self.bubble.show_reminder(message)
 
-        if play_animation:
-            # 6. 恢复安静模式（回到右下角，显示静态图片）
-            restore_delay = ui_cfg.get("restore_quiet_delay_ms", 10000)
-            weak_self = weakref.ref(self)
-            QTimer.singleShot(restore_delay, lambda ws=weak_self: ws() and ws()._enter_quiet_mode())
-
-    def _show_reminder_interaction(self, reminder: dict) -> None:
-        if self._engine is None:
+    def _handle_bubble_action(self, action: str) -> None:
+        if self._active_reminder is None:
             return
 
-        from reminder_dialog import ReminderInteractionDialog
+        reminder_key = self._active_reminder.get(
+            "_runtime_id",
+            self._active_reminder.get("id", self._active_reminder.get("name", "")),
+        )
+        if self._engine is not None:
+            if action == BubbleWidget.ACTION_SNOOZE:
+                self._engine.handle_snooze(reminder_key, 10)
+            elif action == BubbleWidget.ACTION_ACKNOWLEDGE:
+                self._engine.handle_complete(reminder_key)
+            else:
+                return
+        elif action not in {
+            BubbleWidget.ACTION_SNOOZE,
+            BubbleWidget.ACTION_ACKNOWLEDGE,
+        }:
+            return
 
-        dialog = ReminderInteractionDialog(reminder, self)
-        dialog.snooze_requested.connect(self._engine.handle_snooze)
-        dialog.skip_today_requested.connect(self._engine.handle_skip_today)
-        dialog.complete_requested.connect(self._engine.handle_complete)
-        self._interaction_dialogs.append(dialog)
-
-        def remove_dialog():
-            if dialog in self._interaction_dialogs:
-                self._interaction_dialogs.remove(dialog)
-
-        dialog.finished.connect(remove_dialog)
-        dialog.show()
+        self._active_reminder = None
+        self.bubble.hide_bubble()
+        self._enter_quiet_mode()
 
     # --- 鼠标拖拽 ---
     def mousePressEvent(self, event):

@@ -75,16 +75,46 @@ class PetWindowModeTests(unittest.TestCase):
         self.assertFalse(self.window.wander_timer.isActive())
         self.assertEqual(self.window.pos(), original_position)
 
-    def test_interaction_dialog_calls_engine_action(self):
+    def test_reminder_bubble_snooze_stops_animation_and_restores_quiet_mode(self):
         engine = Mock()
         self.window._engine = engine
 
-        self.window._show_reminder_interaction({"name": "Task", "message": "Do it"})
-        dialog = self.window._interaction_dialogs[0]
-        dialog._snooze(10)
+        self.window.trigger_reminder({
+            "id": "task-id",
+            "name": "Task",
+            "message": "Do it",
+            "action_type": "play_animation",
+            "animation": "cheer",
+            "sound": False,
+        })
+        self.assertEqual(self.window.bubble.mode, "reminder")
+        self.assertFalse(self.window._quiet_mode)
 
-        engine.handle_snooze.assert_called_once_with("Task", 10)
-        self.assertEqual(self.window._interaction_dialogs, [])
+        self.window._handle_bubble_action("snooze_10")
+
+        engine.handle_snooze.assert_called_once_with("task-id", 10)
+        self.assertTrue(self.window._quiet_mode)
+        self.assertEqual(self.window.bubble.mode, "hidden")
+        self.assertIsNone(self.window._active_reminder)
+
+    def test_reminder_bubble_acknowledge_completes_immediately(self):
+        engine = Mock()
+        self.window._engine = engine
+        self.window.trigger_reminder({
+            "_runtime_id": "runtime-id",
+            "name": "Task",
+            "message": "Do it",
+            "action_type": "play_animation",
+            "animation": "cheer",
+            "sound": False,
+        })
+
+        self.window._handle_bubble_action("acknowledge")
+
+        engine.handle_complete.assert_called_once_with("runtime-id")
+        self.assertTrue(self.window._quiet_mode)
+        self.assertFalse(self.window.animation_player.is_playing())
+        self.assertEqual(self.window.bubble.mode, "hidden")
 
     def test_window_is_clamped_to_available_screen(self):
         screen = QApplication.primaryScreen().availableGeometry()

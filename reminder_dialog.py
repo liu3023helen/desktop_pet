@@ -34,65 +34,6 @@ def _scan_animation_dirs() -> list:
     return dirs
 
 
-class ReminderInteractionDialog(QDialog):
-    """Non-modal reminder actions for snooze, skip, and completion."""
-
-    snooze_requested = pyqtSignal(str, int)
-    skip_today_requested = pyqtSignal(str)
-    complete_requested = pyqtSignal(str)
-
-    def __init__(self, reminder: dict, parent=None):
-        super().__init__(parent)
-        self._reminder_name = reminder.get("name", "提醒")
-        self._reminder_key = reminder.get(
-            "_runtime_id", reminder.get("id", self._reminder_name)
-        )
-        self.setWindowTitle(self._reminder_name)
-        self.setWindowFlag(Qt.WindowStaysOnTopHint, True)
-        self.setAttribute(Qt.WA_DeleteOnClose, True)
-        self.setModal(False)
-        self.setFixedWidth(360)
-
-        layout = QVBoxLayout(self)
-        message = QLabel(reminder.get("message") or f"{self._reminder_name}时间到了")
-        message.setWordWrap(True)
-        layout.addWidget(message)
-
-        snooze_layout = QHBoxLayout()
-        for minutes in (5, 10):
-            button = QPushButton(f"稍后 {minutes} 分钟")
-            button.setObjectName(f"snooze_{minutes}_button")
-            button.clicked.connect(
-                lambda checked=False, value=minutes: self._snooze(value)
-            )
-            snooze_layout.addWidget(button)
-        layout.addLayout(snooze_layout)
-
-        action_layout = QHBoxLayout()
-        skip_button = QPushButton("今天跳过")
-        skip_button.setObjectName("skip_today_button")
-        skip_button.clicked.connect(self._skip_today)
-        action_layout.addWidget(skip_button)
-
-        complete_button = QPushButton("已完成")
-        complete_button.setObjectName("complete_button")
-        complete_button.clicked.connect(self._complete)
-        action_layout.addWidget(complete_button)
-        layout.addLayout(action_layout)
-
-    def _snooze(self, minutes: int) -> None:
-        self.snooze_requested.emit(self._reminder_key, minutes)
-        self.accept()
-
-    def _skip_today(self) -> None:
-        self.skip_today_requested.emit(self._reminder_key)
-        self.accept()
-
-    def _complete(self) -> None:
-        self.complete_requested.emit(self._reminder_key)
-        self.accept()
-
-
 class ReminderFormDialog(QDialog):
     """新增/编辑提醒的表单弹窗"""
 

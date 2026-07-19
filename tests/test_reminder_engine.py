@@ -150,6 +150,45 @@ class ReminderSnoozeTests(unittest.TestCase):
         self.assertEqual(fired, ["second-id"])
 
 
+class ReminderCompletionTests(unittest.TestCase):
+    def test_completed_occurrence_can_trigger_again_at_an_edited_time(self):
+        reminder = make_reminder(reminder_time="09:30")
+        reminder["id"] = "editable"
+        engine = ReminderEngine({"reminders": [reminder]})
+        engine.load_reminders()
+        clock = [datetime(2026, 7, 20, 9, 30, 10)]
+        engine.get_effective_now = lambda: clock[0]
+        fired = []
+        engine._trigger_reminder = lambda item: fired.append(item["time"])
+
+        engine._check_reminders()
+        engine.handle_complete("editable")
+        edited = dict(reminder, time="09:31")
+        engine.reload_reminders({"reminders": [edited]})
+        clock[0] = datetime(2026, 7, 20, 9, 31, 10)
+        engine._check_reminders()
+
+        self.assertEqual(fired, ["09:30", "09:31"])
+
+    def test_acknowledging_does_not_repeat_the_same_occurrence(self):
+        reminder = make_reminder(reminder_time="09:30")
+        reminder["id"] = "same-occurrence"
+        engine = ReminderEngine({"reminders": [reminder]})
+        engine.load_reminders()
+        clock = [datetime(2026, 7, 20, 9, 30, 10)]
+        engine.get_effective_now = lambda: clock[0]
+        fired = []
+        engine._trigger_reminder = lambda item: fired.append(item["time"])
+
+        engine._check_reminders()
+        engine.handle_complete("same-occurrence")
+        engine.reload_reminders({"reminders": [dict(reminder)]})
+        clock[0] = datetime(2026, 7, 20, 9, 30, 20)
+        engine._check_reminders()
+
+        self.assertEqual(fired, ["09:30"])
+
+
 class ReminderThreadLifecycleTests(unittest.TestCase):
     def test_immediate_stop_is_not_lost(self):
         engine = ReminderEngine({"reminders": []})

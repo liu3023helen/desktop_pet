@@ -1,5 +1,5 @@
 """
-贪睡/跳过/完成状态管理器
+贪睡/跳过状态管理器
 管理提醒的临时状态，程序重启后自动失效（不持久化）
 """
 import logging
@@ -17,8 +17,6 @@ class SnoozeManager:
         self._snoozed: Dict[str, datetime] = {}
         # 今天跳过的提醒名称集合
         self._skipped_today: Set[str] = set()
-        # 已完成的提醒（本次触发周期）
-        self._completed: Set[str] = set()
         # 上次重置日期，用于跨天自动清理
         self._last_reset_date: Optional[str] = None
 
@@ -38,7 +36,6 @@ class SnoozeManager:
             now = datetime.now()
         self._snoozed.clear()
         self._skipped_today.clear()
-        self._completed.clear()
         self._last_reset_date = now.strftime("%Y-%m-%d")
 
     # --- 贪睡 ---
@@ -54,9 +51,8 @@ class SnoozeManager:
             now = datetime.now()
         next_time = now + timedelta(minutes=minutes)
         self._snoozed[reminder_name] = next_time
-        # 贪睡时自动清除跳过和完成状态
+        # 贪睡时自动清除跳过状态
         self._skipped_today.discard(reminder_name)
-        self._completed.discard(reminder_name)
         logger.info(f"'{reminder_name}' 贪睡 {minutes} 分钟，下次触发: {next_time.strftime('%H:%M')}")
 
     def get_snooze_time(
@@ -96,27 +92,12 @@ class SnoozeManager:
         self._skipped_today.add(reminder_name)
         # 跳过时清除贪睡状态
         self._snoozed.pop(reminder_name, None)
-        self._completed.discard(reminder_name)
         logger.info(f"'{reminder_name}' 今天跳过")
 
     def is_skipped(self, reminder_name: str, now: Optional[datetime] = None) -> bool:
         """检查提醒是否被今天跳过"""
         self._check_daily_reset(now)
         return reminder_name in self._skipped_today
-
-    # --- 完成 ---
-    def complete(self, reminder_name: str) -> None:
-        """标记提醒为已完成（本次触发周期）"""
-        self._completed.add(reminder_name)
-        # 完成时清除贪睡和跳过状态
-        self._snoozed.pop(reminder_name, None)
-        self._skipped_today.discard(reminder_name)
-        logger.info(f"'{reminder_name}' 标记为已完成")
-
-    def is_completed(self, reminder_name: str, now: Optional[datetime] = None) -> bool:
-        """检查提醒是否已完成"""
-        self._check_daily_reset(now)
-        return reminder_name in self._completed
 
     # --- 状态查询 ---
     def get_all_status(self) -> dict:
@@ -125,5 +106,4 @@ class SnoozeManager:
         return {
             "snoozed": {k: v.strftime("%H:%M:%S") for k, v in self._snoozed.items()},
             "skipped": list(self._skipped_today),
-            "completed": list(self._completed),
         }

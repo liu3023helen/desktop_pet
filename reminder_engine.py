@@ -1,7 +1,7 @@
 """
 提醒引擎 - YAML配置驱动的可扩展提醒调度器
 策略模式：不同action_type对应不同处理器，新增提醒类型只需改配置
-二期增强：网络时间偏移 + 工作日判断 + 贪睡/跳过/完成交互
+二期增强：网络时间偏移 + 工作日判断 + 贪睡/跳过交互
 """
 import logging
 import threading
@@ -242,10 +242,9 @@ class ReminderEngine(QThread):
             # --- 二期：状态检查（加锁保护）---
             with self._lock:
                 skipped = self._snooze_mgr.is_skipped(reminder_identity, now=now)
-                completed = self._snooze_mgr.is_completed(reminder_identity, now=now)
                 snooze_time = self._snooze_mgr.get_snooze_time(reminder_identity, now=now)
 
-            if skipped or completed:
+            if skipped:
                 continue
 
             # --- 二期：贪睡检查 ---
@@ -369,10 +368,11 @@ class ReminderEngine(QThread):
                 self._triggered_today.add(_trigger_key(reminder, index, today_key))
 
     def handle_complete(self, reminder_identifier: str) -> None:
-        """处理完成请求（主线程调用）"""
+        """Acknowledge only the active occurrence, not the whole reminder."""
         with self._lock:
             found = self._find_reminder(reminder_identifier)
             if found is None:
                 logger.warning(f"未找到要完成的提醒: {reminder_identifier}")
                 return
-            self._snooze_mgr.complete(found[2])
+            self._snooze_mgr.clear_snooze(found[2])
+            logger.info(f"提醒本次触发已确认: {found[2]}")

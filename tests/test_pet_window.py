@@ -101,6 +101,17 @@ class PetWindowModeTests(unittest.TestCase):
             self.window.y() + self.window.height(), screen.bottom() + 1
         )
 
+    def test_disabled_weather_config_disables_tray_action(self):
+        self.window.bubble.close()
+        self.window.tray_icon.hide()
+        self.window.close()
+        self.window = PetWindow({
+            "pet": {"name": "Weather Test"},
+            "weather": {"enabled": False},
+        })
+
+        self.assertFalse(self.window._weather_action.isEnabled())
+
 
 if __name__ == "__main__":
     unittest.main()

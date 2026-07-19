@@ -224,7 +224,7 @@ class QWeatherProvider(WeatherProvider):
             return None
 
         try:
-            geo_url = f"{self.GEO_URL}?location={city}&key={api_key}&lang=zh"
+            geo_url = f"{self.GEO_URL}?{urllib.parse.urlencode({'location': city, 'key': api_key, 'lang': 'zh'})}"
             with safe_urlopen(geo_url, timeout=8) as resp:
                 geo_data = json.loads(resp.read().decode("utf-8"))
 
@@ -240,7 +240,7 @@ class QWeatherProvider(WeatherProvider):
             location_id = locations[0]["id"]
             city_name = locations[0]["name"]
 
-            weather_url = f"{self.WEATHER_URL}?location={location_id}&key={api_key}"
+            weather_url = f"{self.WEATHER_URL}?{urllib.parse.urlencode({'location': location_id, 'key': api_key})}"
             with safe_urlopen(weather_url, timeout=8) as resp:
                 weather_data = json.loads(resp.read().decode("utf-8"))
 
@@ -258,7 +258,7 @@ class QWeatherProvider(WeatherProvider):
             )
 
         except Exception as e:
-            logger.error(f"和风天气查询异常: {e}")
+            logger.error(f"和风天气查询异常: {type(e).__name__}")
             return None
 
 
@@ -271,10 +271,13 @@ class OpenWeatherProvider(WeatherProvider):
             return None
 
         try:
-            url = (
-                f"{self.URL}?q={city}&appid={api_key}"
-                f"&units=metric&lang=zh_cn"
-            )
+            params = urllib.parse.urlencode({
+                "q": city,
+                "appid": api_key,
+                "units": "metric",
+                "lang": "zh_cn",
+            })
+            url = f"{self.URL}?{params}"
             with safe_urlopen(url, timeout=8) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
 
@@ -287,7 +290,7 @@ class OpenWeatherProvider(WeatherProvider):
             )
 
         except Exception as e:
-            logger.error(f"OpenWeatherMap查询异常: {e}")
+            logger.error(f"OpenWeatherMap查询异常: {type(e).__name__}")
             return None
 
 
@@ -300,6 +303,11 @@ class WeatherService:
         self._provider_name = self._config.get("api_provider", "openmeteo")
         self._last_result: Optional[WeatherInfo] = None
         self._last_fetch_time: Optional[datetime] = None
+        self._last_city: Optional[str] = None
+        interval = self._config.get("update_interval_minutes", 60)
+        self._update_interval_minutes = (
+            float(interval) if isinstance(interval, (int, float)) and interval > 0 else 60.0
+        )
 
         self._providers: List[WeatherProvider] = []
         self._init_providers()
@@ -319,12 +327,26 @@ class WeatherService:
 
         self._providers = providers
 
-    def get_weather(self, city: str) -> Optional[WeatherInfo]:
+    def get_weather(self, city: str, force: bool = False) -> Optional[WeatherInfo]:
         """
         获取天气信息
         策略: 依次尝试各提供者，返回第一个成功结果
         Open-Meteo 无需 Key 可直接使用
         """
+        city = city.strip() if isinstance(city, str) else ""
+        if not city:
+            logger.warning("天气查询城市不能为空")
+            return None
+
+        if (
+            not force
+            and self._last_result is not None
+            and self._last_city == city
+            and not self.needs_refresh(self._update_interval_minutes)
+        ):
+            logger.info(f"使用天气缓存: {city}")
+            return self._last_result
+
         logger.info(f"查询天气: {city} (provider: {self._provider_name})")
 
         for provider in self._providers:
@@ -334,6 +356,7 @@ class WeatherService:
                 if info is not None:
                     self._last_result = info
                     self._last_fetch_time = datetime.now()
+                    self._last_city = city
                     logger.info(f"天气查询成功: {info.city} {info.condition} {info.temperature}°C")
                     return info
             except Exception as e:
@@ -341,7 +364,7 @@ class WeatherService:
                 continue
 
         logger.warning(f"所有天气API均不可用")
-        return self._last_result
+        return self._last_result if self._last_city == city else None
 
     def get_last_result(self) -> Optional[WeatherInfo]:
         """获取上次成功查询的天气信息"""

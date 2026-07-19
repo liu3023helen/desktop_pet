@@ -117,6 +117,8 @@ class PetWindow(QWidget):
         # 提醒引擎引用（由外部设置）
         self._engine = None
         self._interaction_dialogs = []
+        self._weather_service = None
+        self._weather_service_config = None
 
         # 系统托盘
         self._setup_tray()
@@ -209,9 +211,12 @@ class PetWindow(QWidget):
         sync_time_action.triggered.connect(self._sync_time_now)
         tray_menu.addAction(sync_time_action)
 
-        weather_action = QAction("查看天气", self)
-        weather_action.triggered.connect(self._show_weather)
-        tray_menu.addAction(weather_action)
+        self._weather_action = QAction("查看天气", self)
+        weather_cfg = self.config.get("weather", {})
+        weather_enabled = weather_cfg.get("enabled", True) if isinstance(weather_cfg, dict) else True
+        self._weather_action.setEnabled(weather_enabled)
+        self._weather_action.triggered.connect(self._show_weather)
+        tray_menu.addAction(self._weather_action)
 
         tray_menu.addSeparator()
 
@@ -268,6 +273,10 @@ class PetWindow(QWidget):
 
     def _on_reminders_updated(self, new_config):
         """提醒列表已更新，通知引擎重新加载"""
+        self.config = new_config
+        weather_cfg = new_config.get("weather", {})
+        if isinstance(weather_cfg, dict):
+            self._weather_action.setEnabled(weather_cfg.get("enabled", True))
         if self._engine is not None:
             self._engine.reload_reminders(new_config)
             self.tray_icon.showMessage("提醒已更新", "新的提醒设置已生效", QSystemTrayIcon.Information, 2000)
@@ -321,6 +330,9 @@ class PetWindow(QWidget):
             from weather_service import WeatherService
             config = self._config_mgr.load() if self._config_mgr else {}
             weather_cfg = config.get("weather", {})
+            if not weather_cfg.get("enabled", True):
+                self.tray_icon.showMessage("天气功能", "天气查询已在配置中禁用")
+                return
             city = weather_cfg.get("city", "北京")
 
             logger.info(f"[Weather] config loaded: city={city}, weather_cfg={weather_cfg}")
@@ -331,12 +343,14 @@ class PetWindow(QWidget):
             def do_fetch():
                 logger.info("[Weather] do_fetch started in thread")
                 try:
-                    service = WeatherService(config=weather_cfg)
-                    info = service.get_weather(city)
+                    if self._weather_service is None or self._weather_service_config != weather_cfg:
+                        self._weather_service = WeatherService(config=weather_cfg)
+                        self._weather_service_config = dict(weather_cfg)
+                    info = self._weather_service.get_weather(city)
                     logger.info(f"[Weather] get_weather result: {info}")
                     if info:
                         msg = f"{info.city} · {info.condition} · {info.temperature}°C"
-                        if info.humidity:
+                        if info.humidity is not None:
                             msg += f"\n湿度 {info.humidity}%"
                         logger.info(f"[Weather] formatted msg: {msg!r}")
                     else:

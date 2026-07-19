@@ -104,6 +104,22 @@ class ReminderSnoozeTests(unittest.TestCase):
             engine._snooze_mgr.get_snooze_time("valid", now=clock[0])
         )
 
+    def test_duplicate_names_keep_skip_state_isolated_by_id(self):
+        first = make_reminder(name="duplicate")
+        first["id"] = "first-id"
+        second = make_reminder(name="duplicate")
+        second["id"] = "second-id"
+        engine = ReminderEngine({"reminders": [first, second]})
+        engine.load_reminders()
+        engine.get_effective_now = lambda: datetime(2026, 7, 20, 9, 30, 10)
+        fired = []
+        engine._trigger_reminder = lambda reminder: fired.append(reminder["id"])
+
+        engine.handle_skip_today("first-id")
+        engine._check_reminders()
+
+        self.assertEqual(fired, ["second-id"])
+
 
 class ReminderThreadLifecycleTests(unittest.TestCase):
     def test_immediate_stop_is_not_lost(self):

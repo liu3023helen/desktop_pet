@@ -64,7 +64,9 @@ class ReminderInteractionTests(unittest.TestCase):
         cls.app = QApplication.instance() or QApplication([])
 
     def test_snooze_button_emits_name_and_minutes(self):
-        dialog = ReminderInteractionDialog({"name": "Stand up", "message": "Move"})
+        dialog = ReminderInteractionDialog({
+            "id": "stand-up-id", "name": "Stand up", "message": "Move"
+        })
         emitted = []
         dialog.snooze_requested.connect(
             lambda name, minutes: emitted.append((name, minutes))
@@ -72,7 +74,7 @@ class ReminderInteractionTests(unittest.TestCase):
 
         dialog.findChild(QPushButton, "snooze_5_button").click()
 
-        self.assertEqual(emitted, [("Stand up", 5)])
+        self.assertEqual(emitted, [("stand-up-id", 5)])
 
     def test_skip_and_complete_buttons_emit_actions(self):
         skip_dialog = ReminderInteractionDialog({"name": "Task"})

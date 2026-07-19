@@ -79,6 +79,7 @@ class ReminderEngine(QThread):
 
         # 注册的提醒列表
         self._reminders: List[Dict[str, Any]] = []
+        self._runtime_identities: Dict[int, str] = {}
 
         # 动作处理器注册表
         self._handlers: Dict[str, Callable] = action_handlers or {}
@@ -140,6 +141,11 @@ class ReminderEngine(QThread):
                 continue
             self._reminders.append(reminder)
 
+        self._runtime_identities = {
+            id(reminder): _reminder_identity(reminder, index)
+            for index, reminder in enumerate(self._reminders)
+        }
+
         enabled = [r for r in self._reminders if r.get("enabled", False)]
         logger.info(f"加载了 {len(enabled)} 个启用的提醒")
         for r in enabled:
@@ -197,6 +203,7 @@ class ReminderEngine(QThread):
                 continue
 
             reminder_name = reminder.get("name", "")
+            reminder_identity = self._runtime_identities[id(reminder)]
             reminder_time = reminder.get("time", "")
             if not reminder_time:
                 continue
@@ -207,9 +214,9 @@ class ReminderEngine(QThread):
 
             # --- 二期：状态检查（加锁保护）---
             with self._lock:
-                skipped = self._snooze_mgr.is_skipped(reminder_name, now=now)
-                completed = self._snooze_mgr.is_completed(reminder_name, now=now)
-                snooze_time = self._snooze_mgr.get_snooze_time(reminder_name, now=now)
+                skipped = self._snooze_mgr.is_skipped(reminder_identity, now=now)
+                completed = self._snooze_mgr.is_completed(reminder_identity, now=now)
+                snooze_time = self._snooze_mgr.get_snooze_time(reminder_identity, now=now)
 
             if skipped or completed:
                 continue
@@ -218,7 +225,7 @@ class ReminderEngine(QThread):
             if snooze_time is not None:
                 if now >= snooze_time:
                     with self._lock:
-                        self._snooze_mgr.clear_snooze(reminder_name)
+                        self._snooze_mgr.clear_snooze(reminder_identity)
                     logger.info(f"贪睡提醒触发: {reminder_name}")
                     self._trigger_reminder(reminder)
                 continue
@@ -251,53 +258,71 @@ class ReminderEngine(QThread):
 
     def _trigger_reminder(self, reminder: Dict[str, Any]) -> None:
         """触发单个提醒"""
-        reminder_name = reminder.get("name", "")
+        payload = dict(reminder)
+        payload["_runtime_id"] = self._runtime_identities.get(
+            id(reminder), reminder.get("id", reminder.get("name", ""))
+        )
 
         # 1. 发射信号（在主线程处理UI相关逻辑）
-        self.reminder_triggered.emit(reminder)
+        self.reminder_triggered.emit(payload)
 
         # 2. 执行动作
-        action_type = reminder.get("action_type", "notify_only")
+        action_type = payload.get("action_type", "notify_only")
         handler = self._handlers.get(action_type)
 
         if handler:
             try:
-                handler(reminder)
+                handler(payload)
             except Exception as e:
                 logger.error(f"执行动作 {action_type} 失败: {e}")
         elif action_type not in {"notify_only", "play_animation"}:
             logger.warning(f"未找到动作处理器: {action_type}")
 
     # --- 二期：交互处理方法（由主线程通过槽函数调用）---
-    def handle_snooze(self, reminder_name: str, minutes: int) -> None:
+    def _find_reminder(self, identifier: str):
+        for index, reminder in enumerate(self._reminders):
+            identity = self._runtime_identities[id(reminder)]
+            if identity == identifier:
+                return index, reminder, identity
+        for index, reminder in enumerate(self._reminders):
+            if reminder.get("name") == identifier:
+                return index, reminder, self._runtime_identities[id(reminder)]
+        return None
+
+    def handle_snooze(self, reminder_identifier: str, minutes: int) -> None:
         """处理贪睡请求（主线程调用）"""
         with self._lock:
+            found = self._find_reminder(reminder_identifier)
+            if found is None:
+                logger.warning(f"未找到要贪睡的提醒: {reminder_identifier}")
+                return
+            index, reminder, identity = found
             now = self.get_effective_now()
-            self._snooze_mgr.snooze(reminder_name, minutes, now=now)
+            self._snooze_mgr.snooze(identity, minutes, now=now)
             # 标记为已触发，避免原时间点再次触发
-            now = self.get_effective_now()
             today_key = _date_key(now)
-            for index, r in enumerate(self._reminders):
-                if r.get("name") == reminder_name and r.get("enabled"):
-                    time_str = r.get("time", "")
-                    if time_str:
-                        self._triggered_today.add(_trigger_key(r, index, today_key))
-                    break
+            if reminder.get("enabled") and reminder.get("time"):
+                self._triggered_today.add(_trigger_key(reminder, index, today_key))
 
-    def handle_skip_today(self, reminder_name: str) -> None:
+    def handle_skip_today(self, reminder_identifier: str) -> None:
         """处理今天跳过请求（主线程调用）"""
         with self._lock:
-            self._snooze_mgr.skip_today(reminder_name)
+            found = self._find_reminder(reminder_identifier)
+            if found is None:
+                logger.warning(f"未找到要跳过的提醒: {reminder_identifier}")
+                return
+            index, reminder, identity = found
+            self._snooze_mgr.skip_today(identity)
             now = self.get_effective_now()
             today_key = _date_key(now)
-            for index, r in enumerate(self._reminders):
-                if r.get("name") == reminder_name and r.get("enabled"):
-                    time_str = r.get("time", "")
-                    if time_str:
-                        self._triggered_today.add(_trigger_key(r, index, today_key))
-                    break
+            if reminder.get("enabled") and reminder.get("time"):
+                self._triggered_today.add(_trigger_key(reminder, index, today_key))
 
-    def handle_complete(self, reminder_name: str) -> None:
+    def handle_complete(self, reminder_identifier: str) -> None:
         """处理完成请求（主线程调用）"""
         with self._lock:
-            self._snooze_mgr.complete(reminder_name)
+            found = self._find_reminder(reminder_identifier)
+            if found is None:
+                logger.warning(f"未找到要完成的提醒: {reminder_identifier}")
+                return
+            self._snooze_mgr.complete(found[2])

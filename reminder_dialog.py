@@ -44,6 +44,9 @@ class ReminderInteractionDialog(QDialog):
     def __init__(self, reminder: dict, parent=None):
         super().__init__(parent)
         self._reminder_name = reminder.get("name", "提醒")
+        self._reminder_key = reminder.get(
+            "_runtime_id", reminder.get("id", self._reminder_name)
+        )
         self.setWindowTitle(self._reminder_name)
         self.setWindowFlag(Qt.WindowStaysOnTopHint, True)
         self.setAttribute(Qt.WA_DeleteOnClose, True)
@@ -78,15 +81,15 @@ class ReminderInteractionDialog(QDialog):
         layout.addLayout(action_layout)
 
     def _snooze(self, minutes: int) -> None:
-        self.snooze_requested.emit(self._reminder_name, minutes)
+        self.snooze_requested.emit(self._reminder_key, minutes)
         self.accept()
 
     def _skip_today(self) -> None:
-        self.skip_today_requested.emit(self._reminder_name)
+        self.skip_today_requested.emit(self._reminder_key)
         self.accept()
 
     def _complete(self) -> None:
-        self.complete_requested.emit(self._reminder_name)
+        self.complete_requested.emit(self._reminder_key)
         self.accept()
 
 

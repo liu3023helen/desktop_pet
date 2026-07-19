@@ -60,6 +60,20 @@ class PetWindowModeTests(unittest.TestCase):
 
         self.assertEqual(self.window.wander_timer.interval(), 7)
 
+    def test_notify_only_does_not_force_animation_or_movement(self):
+        original_position = self.window.pos()
+
+        self.window.trigger_reminder({
+            "name": "Notification",
+            "message": "Message",
+            "action_type": "notify_only",
+            "sound": False,
+        })
+
+        self.assertTrue(self.window._quiet_mode)
+        self.assertFalse(self.window.wander_timer.isActive())
+        self.assertEqual(self.window.pos(), original_position)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -403,23 +403,26 @@ class PetWindow(QWidget):
         message = reminder.get("message", f"{name}时间到了！")
         animation = reminder.get("animation", "cheer")
         sound_enabled = reminder.get("sound", True)
+        action_type = reminder.get("action_type", "notify_only")
+        play_animation = action_type in {"open_url", "play_animation"}
 
         logger.info(f"触发提醒: {name}, 消息: {message}")
 
-        # 1. 进入活跃模式（开始闲逛）
-        self._enter_active_mode()
+        if play_animation:
+            # 1. 进入活跃模式（开始闲逛）
+            self._enter_active_mode()
 
-        # 2. 移动到屏幕正中央
-        screen = QApplication.primaryScreen().geometry()
-        center_x = screen.width() // 2 - self.width() // 2
-        center_y = screen.height() // 2 - self.height() // 2
-        self.move(center_x, center_y)
+            # 2. 移动到屏幕正中央
+            screen = QApplication.primaryScreen().geometry()
+            center_x = screen.width() // 2 - self.width() // 2
+            center_y = screen.height() // 2 - self.height() // 2
+            self.move(center_x, center_y)
 
-        # 3. 切换动画
-        if self.animation_player.is_animation_loaded(animation) or self.animation_player.load_animation(animation):
-            self.animation_player.play(animation, fps=3, loop=True)
-        else:
-            self.animation_player.play("cheer", fps=3, loop=True)
+            # 3. 切换动画
+            if self.animation_player.is_animation_loaded(animation) or self.animation_player.load_animation(animation):
+                self.animation_player.play(animation, fps=3, loop=True)
+            else:
+                self.animation_player.play("cheer", fps=3, loop=True)
 
         # 4. 播放提示音（支持每个提醒使用不同的音效文件）
         if sound_enabled:
@@ -432,10 +435,11 @@ class PetWindow(QWidget):
         self.bubble.show_bubble(message, duration_ms=bubble_dur)
         self.tray_icon.showMessage(name, message, QSystemTrayIcon.Information, 5000)
 
-        # 6. 恢复安静模式（回到右下角，显示静态图片）
-        restore_delay = ui_cfg.get("restore_quiet_delay_ms", 10000)
-        weak_self = weakref.ref(self)
-        QTimer.singleShot(restore_delay, lambda ws=weak_self: ws() and ws()._enter_quiet_mode())
+        if play_animation:
+            # 6. 恢复安静模式（回到右下角，显示静态图片）
+            restore_delay = ui_cfg.get("restore_quiet_delay_ms", 10000)
+            weak_self = weakref.ref(self)
+            QTimer.singleShot(restore_delay, lambda ws=weak_self: ws() and ws()._enter_quiet_mode())
 
     # --- 鼠标拖拽 ---
     def mousePressEvent(self, event):

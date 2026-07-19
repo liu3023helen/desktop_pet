@@ -3,6 +3,7 @@
 替代手动编辑YAML配置文件
 """
 import os
+import uuid
 from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,
     QPushButton, QHeaderView, QMessageBox, QFormLayout, QLineEdit,
@@ -79,9 +80,10 @@ class ReminderFormDialog(QDialog):
         form_layout.addRow("动作类型", self._action_combo)
 
         # 目标URL
+        self._url_label = QLabel("目标URL")
         self._url_edit = QLineEdit()
         self._url_edit.setPlaceholderText("dingtalk:// 或 https://...")
-        form_layout.addRow("目标URL", self._url_edit)
+        form_layout.addRow(self._url_label, self._url_edit)
 
         # 专属动画
         self._anim_combo = QComboBox()
@@ -151,11 +153,7 @@ class ReminderFormDialog(QDialog):
         """根据动作类型显示/隐藏URL输入框"""
         visible = (index == 0)  # "打开URL" 是第0项
         self._url_edit.setVisible(visible)
-        if not visible:
-            self._url_edit.clear()
-        label = self._url_edit.parent().findChild(QLabel)
-        if label:
-            label.setVisible(visible)
+        self._url_label.setVisible(visible)
 
     def _populate_form(self):
         """用已有数据填充表单"""
@@ -198,21 +196,27 @@ class ReminderFormDialog(QDialog):
 
         action_types = ["open_url", "play_animation", "notify_only"]
         action_idx = self._action_combo.currentIndex()
+        action_target = self._url_edit.text().strip()
+        if action_idx == 0 and not action_target:
+            QMessageBox.warning(self, "验证失败", "打开URL类型必须填写目标URL")
+            return
 
         sound_file = self._sound_file_combo.currentData() or ""
 
-        self._result = {
+        self._result = dict(self._reminder_data or {})
+        self._result.setdefault("id", uuid.uuid4().hex)
+        self._result.update({
             "name": name,
-            "enabled": True,
+            "enabled": self._result.get("enabled", True),
             "time": time_str,
             "weekdays_only": self._weekday_check.isChecked(),
             "action_type": action_types[action_idx],
-            "action_target": self._url_edit.text().strip(),
+            "action_target": action_target if action_idx == 0 else "",
             "animation": self._anim_combo.currentText(),
             "message": self._message_edit.toPlainText().strip(),
             "sound": self._sound_check.isChecked(),
             "sound_file": sound_file,
-        }
+        })
         self.accept()
 
     def get_result(self) -> dict:

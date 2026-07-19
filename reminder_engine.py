@@ -270,7 +270,7 @@ class ReminderEngine(QThread):
                 handler(reminder)
             except Exception as e:
                 logger.error(f"执行动作 {action_type} 失败: {e}")
-        else:
+        elif action_type not in {"notify_only", "play_animation"}:
             logger.warning(f"未找到动作处理器: {action_type}")
 
     # --- 二期：交互处理方法（由主线程通过槽函数调用）---

@@ -7,7 +7,6 @@ import logging
 import socket
 import struct
 import urllib.request
-import urllib.error
 import urllib.parse
 from dataclasses import dataclass
 from datetime import datetime

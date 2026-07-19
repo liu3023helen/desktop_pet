@@ -51,6 +51,7 @@ class PetWindow(QWidget):
         self.config = config or {}
         nested_pet_cfg = self.config.get("pet")
         self._pet_config = nested_pet_cfg if isinstance(nested_pet_cfg, dict) else self.config
+        self._default_animation = self._pet_config.get("default_animation", "cheer")
         logger.info("初始化宠物窗口（安静模式）")
 
         # 窗口属性（从配置读取，兼容旧版无配置项）
@@ -91,8 +92,13 @@ class PetWindow(QWidget):
         self.animation_player = AnimationPlayer()
         self.animation_player.bind(self.animation_label)
 
-        # 预加载 cheer 动画（2帧，低帧率让每帧停留更久）
-        self.animation_player.load_animation("cheer", fps=3)
+        # 预加载默认动画（低帧率让每帧停留更久）
+        if not self.animation_player.load_animation(self._default_animation, fps=3):
+            logger.warning(
+                f"默认动画不存在: {self._default_animation}，回退到 cheer"
+            )
+            self._default_animation = "cheer"
+            self.animation_player.load_animation(self._default_animation, fps=3)
 
         # 安静模式：只显示静态图片，不播放动画
         self._show_static_frame()
@@ -136,10 +142,10 @@ class PetWindow(QWidget):
         logger.debug(f"宠物移至右下角: ({x}, {y})")
 
     def _show_static_frame(self):
-        """显示静态图片（cheer第一帧），不播放动画"""
-        if not self.animation_player.is_animation_loaded("cheer"):
-            self.animation_player.load_animation("cheer", fps=3)
-        pixmap = self.animation_player.get_frame("cheer", 0)
+        """显示默认动画第一帧，不播放动画"""
+        if not self.animation_player.is_animation_loaded(self._default_animation):
+            self.animation_player.load_animation(self._default_animation, fps=3)
+        pixmap = self.animation_player.get_frame(self._default_animation, 0)
         if pixmap:
             # 只显示第一帧，不启动定时器
             self.animation_label.setPixmap(pixmap)
@@ -473,7 +479,7 @@ class PetWindow(QWidget):
             if self.animation_player.is_animation_loaded(animation) or self.animation_player.load_animation(animation):
                 self.animation_player.play(animation, fps=3, loop=True)
             else:
-                self.animation_player.play("cheer", fps=3, loop=True)
+                self.animation_player.play(self._default_animation, fps=3, loop=True)
 
         # 4. 播放提示音（支持每个提醒使用不同的音效文件）
         if sound_enabled:

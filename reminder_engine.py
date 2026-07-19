@@ -69,11 +69,6 @@ class ReminderEngine(QThread):
     # 信号：提醒触发
     reminder_triggered = pyqtSignal(dict)  # 提醒配置字典
 
-    # 二期新增信号：交互请求
-    snooze_requested = pyqtSignal(str, int)      # 参数: 提醒名称, 延迟分钟数
-    skip_today_requested = pyqtSignal(str)        # 参数: 提醒名称
-    complete_requested = pyqtSignal(str)          # 参数: 提醒名称
-
     def __init__(self, config: Dict[str, Any], action_handlers: Optional[Dict[str, Callable]] = None):
         super().__init__()
         self.config = config

@@ -6,7 +6,7 @@ import logging
 import socket
 import threading
 from pathlib import Path
-from typing import Callable, Dict, List, Tuple
+from typing import Callable, List, Tuple
 
 from PyQt5.QtCore import QCoreApplication, QObject, Qt, pyqtSignal, pyqtSlot
 

@@ -3,7 +3,7 @@
 支持多套PNG序列帧动画加载、帧率控制、alpha透明合成、平滑切换
 """
 import logging
-import sys
+import re
 from pathlib import Path
 from typing import Dict, List, Optional, Callable
 
@@ -14,6 +14,13 @@ from PyQt5.QtGui import QPixmap
 from utils import get_resource_path
 
 logger = logging.getLogger(__name__)
+
+
+def _natural_sort_key(path: Path):
+    return [
+        int(part) if part.isdigit() else part.lower()
+        for part in re.split(r"(\d+)", path.name)
+    ]
 
 
 class AnimationPlayer:
@@ -32,6 +39,7 @@ class AnimationPlayer:
         self._current_animation: Optional[str] = None
         self._current_frame_index: int = 0
         self._fps: int = 8
+        self._loop: bool = True
 
         # 定时器
         self._timer = QTimer()
@@ -68,7 +76,7 @@ class AnimationPlayer:
             return False
 
         # 收集所有PNG文件并按文件名排序
-        png_files = sorted(anim_dir.glob("*.png"))
+        png_files = sorted(anim_dir.glob("*.png"), key=_natural_sort_key)
         if not png_files:
             logger.warning(f"动画目录无PNG文件: {anim_dir}")
             return False
@@ -129,11 +137,15 @@ class AnimationPlayer:
 
         # 如果动画没变化且正在播放，跳过
         if self._current_animation == name and self._timer.isActive():
+            self._fps = fps
+            self._loop = loop
+            self._timer.setInterval(int(1000 / fps))
             return True
 
         self._current_animation = name
         self._current_frame_index = 0
         self._fps = fps
+        self._loop = loop
 
         # 停止之前的定时器
         self._timer.stop()
@@ -149,7 +161,7 @@ class AnimationPlayer:
         def next_frame():
             self._current_frame_index += 1
             if self._current_frame_index >= len(self._frames_cache[name]):
-                if loop:
+                if self._loop:
                     self._current_frame_index = 0
                 else:
                     self._timer.stop()

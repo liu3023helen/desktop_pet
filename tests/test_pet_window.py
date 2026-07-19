@@ -127,6 +127,28 @@ class PetWindowModeTests(unittest.TestCase):
         self.assertIs(run_async.call_args.args[0], config_manager)
         self.assertTrue(callable(run_async.call_args.args[1]))
 
+    def test_configured_default_animation_is_used(self):
+        self.window.bubble.close()
+        self.window.tray_icon.hide()
+        self.window.close()
+        self.window = PetWindow({
+            "pet": {"name": "Walker", "default_animation": "walk"},
+        })
+
+        self.assertEqual(self.window._default_animation, "walk")
+        self.assertTrue(self.window.animation_player.is_animation_loaded("walk"))
+
+    def test_missing_default_animation_falls_back_to_cheer(self):
+        self.window.bubble.close()
+        self.window.tray_icon.hide()
+        self.window.close()
+        self.window = PetWindow({
+            "pet": {"name": "Fallback", "default_animation": "missing"},
+        })
+
+        self.assertEqual(self.window._default_animation, "cheer")
+        self.assertTrue(self.window.animation_player.is_animation_loaded("cheer"))
+
 
 if __name__ == "__main__":
     unittest.main()

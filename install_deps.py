@@ -28,7 +28,7 @@ def main():
     if result.returncode == 0:
         print("依赖安装成功！")
         print("Verification:")
-        for mod in ["PyQt5", "yaml", "PIL"]:
+        for mod in ["PyQt5", "yaml"]:
             try:
                 __import__(mod)
                 print(f"  OK: {mod}")

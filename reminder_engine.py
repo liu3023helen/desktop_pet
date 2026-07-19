@@ -12,7 +12,7 @@ from typing import Any, Callable, Dict, List, Optional
 from PyQt5.QtCore import pyqtSignal, QThread
 
 from snooze_handler import SnoozeManager
-from workday_utils import is_workday_from_datetime
+from workday_utils import is_workday_from_datetime, set_holiday_override
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +72,8 @@ class ReminderEngine(QThread):
     def __init__(self, config: Dict[str, Any], action_handlers: Optional[Dict[str, Callable]] = None):
         super().__init__()
         self.config = config
+        holidays = config.get("holidays", {}) if isinstance(config, dict) else {}
+        set_holiday_override(holidays)
         self._running = False
 
         # 注册的提醒列表
@@ -135,6 +137,7 @@ class ReminderEngine(QThread):
     def reload_reminders(self, new_config: Dict[str, Any]) -> None:
         """外部调用：重新加载配置（管理面板修改后）"""
         self.config = new_config
+        set_holiday_override(new_config.get("holidays", {}))
         self.load_reminders()
 
     def run(self) -> None:

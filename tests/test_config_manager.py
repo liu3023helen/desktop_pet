@@ -26,6 +26,8 @@ class ConfigDefaultsTests(unittest.TestCase):
         ):
             self.assertIn(section, config)
         self.assertIsInstance(config["holidays"], dict)
+        self.assertEqual(config["reminders"][0]["schedule_type"], "daily")
+        self.assertNotIn("weekdays_only", config["reminders"][0])
 
     def test_partial_config_is_deep_merged_with_template(self):
         with tempfile.TemporaryDirectory() as temp_dir:

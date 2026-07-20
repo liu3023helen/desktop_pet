@@ -13,7 +13,16 @@ from typing import Dict, Any, Optional, Tuple
 from utils import get_app_dir, get_resource_path
 
 logger = logging.getLogger(__name__)
-CURRENT_CONFIG_VERSION = 2
+CURRENT_CONFIG_VERSION = 3
+DEFAULT_POMODORO_CONFIG = {
+    "focus_minutes": 25,
+    "short_break_minutes": 5,
+    "long_break_minutes": 15,
+    "long_break_every": 4,
+    "auto_start_break": False,
+    "auto_start_focus": False,
+    "hide_during_focus": True,
+}
 
 
 def _deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
@@ -117,6 +126,16 @@ class ConfigManager:
                         "workday" if reminder["weekdays_only"] else "daily"
                     )
                     reminder.pop("weekdays_only", None)
+                    changed = True
+
+        pomodoro = config.get("pomodoro")
+        if pomodoro is None:
+            config["pomodoro"] = dict(DEFAULT_POMODORO_CONFIG)
+            changed = True
+        elif isinstance(pomodoro, dict):
+            for key, default_value in DEFAULT_POMODORO_CONFIG.items():
+                if key not in pomodoro:
+                    pomodoro[key] = default_value
                     changed = True
 
         config["config_version"] = CURRENT_CONFIG_VERSION

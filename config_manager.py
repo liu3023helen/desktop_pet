@@ -5,13 +5,15 @@
 """
 import logging
 import shutil
+import uuid
 import yaml
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Tuple
 
 from utils import get_app_dir, get_resource_path
 
 logger = logging.getLogger(__name__)
+CURRENT_CONFIG_VERSION = 2
 
 
 def _deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
@@ -59,6 +61,9 @@ class ConfigManager:
 
         try:
             config = self._read_yaml(self.config_path)
+            config, changed = self._migrate_config(config)
+            if changed:
+                self._save_migration(config)
             return self._merge_defaults(config)
         except Exception as e:
             self.last_load_error = str(e)
@@ -81,6 +86,66 @@ class ConfigManager:
         defaults = self._default_config()
         return _deep_merge(defaults, config)
 
+    def _migrate_config(
+        self,
+        config: Dict[str, Any],
+    ) -> Tuple[Dict[str, Any], bool]:
+        """Upgrade user configuration without replacing custom values."""
+        raw_version = config.get("config_version", 0)
+        if not isinstance(raw_version, int):
+            raw_version = 0
+        if raw_version > CURRENT_CONFIG_VERSION:
+            logger.warning(
+                f"配置版本 {raw_version} 高于程序支持的 "
+                f"{CURRENT_CONFIG_VERSION}，跳过自动迁移"
+            )
+            return config, False
+
+        changed = raw_version != CURRENT_CONFIG_VERSION
+        reminders = config.get("reminders")
+        if isinstance(reminders, list):
+            for reminder in reminders:
+                if not isinstance(reminder, dict):
+                    continue
+                if not isinstance(reminder.get("id"), str) or not reminder["id"].strip():
+                    reminder["id"] = uuid.uuid4().hex
+                    changed = True
+                if "schedule_type" not in reminder and isinstance(
+                    reminder.get("weekdays_only"), bool
+                ):
+                    reminder["schedule_type"] = (
+                        "workday" if reminder["weekdays_only"] else "daily"
+                    )
+                    reminder.pop("weekdays_only", None)
+                    changed = True
+
+        config["config_version"] = CURRENT_CONFIG_VERSION
+        return config, changed
+
+    def _save_migration(self, config: Dict[str, Any]) -> None:
+        """Back up the old document, then atomically persist its migration."""
+        self.config_path.parent.mkdir(parents=True, exist_ok=True)
+        temp_path = self.config_path.with_suffix(".migration.tmp")
+        try:
+            shutil.copy2(self.config_path, self.backup_path)
+            with open(temp_path, "w", encoding="utf-8") as handle:
+                yaml.safe_dump(
+                    config,
+                    handle,
+                    default_flow_style=False,
+                    allow_unicode=True,
+                    sort_keys=False,
+                )
+            temp_path.replace(self.config_path)
+            logger.info(
+                f"配置已迁移到版本 {CURRENT_CONFIG_VERSION}: "
+                f"{self.config_path}"
+            )
+        except Exception as error:
+            logger.error(f"保存配置迁移失败，保留原配置: {error}")
+        finally:
+            temp_path.unlink(missing_ok=True)
+
     def _default_config(self) -> Dict[str, Any]:
         template_path = get_resource_path("config.yaml")
         try:
@@ -93,6 +158,7 @@ class ConfigManager:
             logger.error(f"加载默认配置模板失败: {e}")
 
         return {
+            "config_version": CURRENT_CONFIG_VERSION,
             "pet": {
                 "name": "小新",
                 "style": "shinchan",

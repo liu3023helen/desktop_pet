@@ -2,6 +2,8 @@
 # 路径：exe同级 data/config.yaml
 # 首次运行时自动从模板释放
 
+config_version: 2
+
 pet:
   name: "小新"
   style: "shinchan"

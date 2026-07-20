@@ -144,6 +144,7 @@ class PetWindow(QWidget):
         self._active_reminder = None
         self._deferred_bubble = None
         self._session_locked = False
+        self._hidden_to_tray = False
         self.pending_reminder_timer = QTimer(self)
         self.pending_reminder_timer.setInterval(1000)
         self.pending_reminder_timer.timeout.connect(
@@ -216,11 +217,11 @@ class PetWindow(QWidget):
         tray_menu = QMenu()
 
         show_action = QAction("显示", self)
-        show_action.triggered.connect(self.show)
+        show_action.triggered.connect(self._show_from_tray)
         tray_menu.addAction(show_action)
 
         hide_action = QAction("隐藏到托盘", self)
-        hide_action.triggered.connect(self.hide)
+        hide_action.triggered.connect(self._hide_to_tray)
         tray_menu.addAction(hide_action)
 
         tray_menu.addSeparator()
@@ -269,8 +270,23 @@ class PetWindow(QWidget):
 
     def _tray_activated(self, reason):
         if reason == QSystemTrayIcon.DoubleClick:
-            self.show()
-            self.activateWindow()
+            self._show_from_tray()
+
+    def _show_from_tray(self) -> None:
+        """Show the pet and keep it visible after the current reminder."""
+        self._hidden_to_tray = False
+        self.show()
+        self.raise_()
+
+    def _hide_to_tray(self) -> None:
+        """Remember that the user wants the idle pet hidden."""
+        self._hidden_to_tray = True
+        self.hide()
+
+    def _restore_idle_visibility(self) -> None:
+        """Restore the user's tray preference after the reminder queue drains."""
+        if self._active_record is None and self._hidden_to_tray:
+            self.hide()
 
     def _toggle_quiet_mode(self, checked):
         """切换安静模式"""
@@ -297,8 +313,7 @@ class PetWindow(QWidget):
     @pyqtSlot()
     def activate_from_launch(self) -> None:
         """Bring the existing instance forward after a repeated launch."""
-        self.show()
-        self.raise_()
+        self._show_from_tray()
         if self.bubble.isVisible():
             self.bubble.raise_()
         logger.info("已有宠物窗口已响应重复启动请求")
@@ -621,6 +636,11 @@ class PetWindow(QWidget):
         logger.info(f"触发提醒: {name}, 消息: {message}")
 
         if play_animation:
+            # A tray-hidden pet must still appear for animation reminders. Keep
+            # the user's idle visibility preference so it can be restored.
+            self.show()
+            self.raise_()
+
             # 1. 进入活跃模式（开始闲逛）
             self._enter_active_mode()
 
@@ -693,6 +713,7 @@ class PetWindow(QWidget):
         self.bubble.hide_bubble()
         self._enter_quiet_mode()
         self._process_pending_reminders()
+        self._restore_idle_visibility()
 
     @pyqtSlot(bool)
     def set_session_locked(self, locked: bool) -> None:
@@ -704,6 +725,7 @@ class PetWindow(QWidget):
         if locked:
             self.bubble.hide_bubble()
             self._enter_quiet_mode()
+            self._restore_idle_visibility()
             logger.info("会话已锁定，暂停提醒展示")
             return
 
@@ -731,7 +753,7 @@ class PetWindow(QWidget):
     # --- 右键菜单 ---
     def contextMenuEvent(self, event):
         menu = QMenu(self)
-        menu.addAction("隐藏", self.hide)
+        menu.addAction("隐藏", self._hide_to_tray)
 
         quiet_action = menu.addAction(
             "安静模式" if self._quiet_mode else "活跃模式"

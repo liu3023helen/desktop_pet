@@ -95,6 +95,72 @@ class PetWindowModeTests(unittest.TestCase):
         self.assertFalse(self.window.wander_timer.isActive())
         self.assertEqual(self.window.pos(), original_position)
 
+    def test_animation_reminder_temporarily_shows_tray_hidden_pet(self):
+        engine = Mock()
+        self.window._engine = engine
+        self.window.show()
+        self.window._hide_to_tray()
+
+        self.window.trigger_reminder({
+            "id": "tray-animation",
+            "name": "Tray animation",
+            "message": "Show the pet",
+            "action_type": "play_animation",
+            "animation": "cheer",
+            "sound": False,
+        })
+        self.app.processEvents()
+
+        self.assertTrue(self.window.isVisible())
+        self.assertTrue(self.window._hidden_to_tray)
+
+        self.window._handle_bubble_action("acknowledge")
+        self.app.processEvents()
+
+        self.assertFalse(self.window.isVisible())
+        self.assertTrue(self.window._hidden_to_tray)
+
+    def test_animation_reminder_keeps_normally_visible_pet_visible(self):
+        self.window.show()
+
+        self.window.trigger_reminder({
+            "id": "visible-animation",
+            "name": "Visible animation",
+            "message": "Stay visible",
+            "action_type": "play_animation",
+            "animation": "cheer",
+            "sound": False,
+        })
+        self.window._handle_bubble_action("acknowledge")
+        self.app.processEvents()
+
+        self.assertTrue(self.window.isVisible())
+        self.assertFalse(self.window._hidden_to_tray)
+
+    def test_tray_hidden_pet_stays_visible_until_reminder_queue_drains(self):
+        self.window.show()
+        self.window._hide_to_tray()
+        for reminder_id in ("queued-first", "queued-second"):
+            self.window.trigger_reminder({
+                "id": reminder_id,
+                "name": reminder_id,
+                "message": reminder_id,
+                "action_type": "play_animation",
+                "animation": "cheer",
+                "sound": False,
+            })
+
+        self.window._handle_bubble_action("acknowledge")
+        self.app.processEvents()
+
+        self.assertEqual(self.window._active_reminder["id"], "queued-second")
+        self.assertTrue(self.window.isVisible())
+
+        self.window._handle_bubble_action("acknowledge")
+        self.app.processEvents()
+
+        self.assertFalse(self.window.isVisible())
+
     def test_reminder_bubble_snooze_stops_animation_and_restores_quiet_mode(self):
         engine = Mock()
         self.window._engine = engine

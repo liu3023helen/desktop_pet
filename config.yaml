@@ -42,6 +42,16 @@ reminders:
   #   message: "一次性提醒时间到了~"
   #   sound: true
 
+# --- 番茄钟 ---
+pomodoro:
+  focus_minutes: 25             # 默认专注时长
+  short_break_minutes: 5        # 短休息
+  long_break_minutes: 15        # 长休息
+  long_break_every: 4           # 每完成几轮进入长休息
+  auto_start_break: false       # 专注完成后自动开始休息
+  auto_start_focus: false       # 休息完成后自动开始下一轮
+  hide_during_focus: true       # 专注时自动隐藏宠物
+
 # --- 网络时间校准（二期）---
 time_sync:
   enabled: true

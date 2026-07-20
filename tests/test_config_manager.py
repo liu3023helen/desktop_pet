@@ -23,12 +23,16 @@ class ConfigDefaultsTests(unittest.TestCase):
             "engine",
             "logging",
             "holidays",
+            "pomodoro",
         ):
             self.assertIn(section, config)
         self.assertIsInstance(config["holidays"], dict)
         self.assertEqual(config["reminders"][0]["schedule_type"], "daily")
         self.assertNotIn("weekdays_only", config["reminders"][0])
         self.assertEqual(config["config_version"], 2)
+        self.assertEqual(config["pomodoro"]["focus_minutes"], 25)
+        self.assertTrue(config["pomodoro"]["hide_during_focus"])
+        self.assertFalse(config["pomodoro"]["auto_start_break"])
 
     def test_legacy_reminders_are_migrated_with_original_backup(self):
         with tempfile.TemporaryDirectory() as temp_dir:

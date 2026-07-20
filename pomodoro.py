@@ -392,6 +392,7 @@ class PomodoroTimer:
         now = now or self._now_provider()
         if self.session is None:
             remaining_seconds = self.settings["focus_minutes"] * 60
+            duration_seconds = remaining_seconds
             phase = PHASE_FOCUS
             status = STATUS_IDLE
             completed_in_set = 0
@@ -401,6 +402,7 @@ class PomodoroTimer:
             status = self.session["status"]
             completed_in_set = self.session.get("completed_in_set", 0)
             label = self.session.get("label", "")
+            duration_seconds = self.session["duration_seconds"]
             if status == STATUS_RUNNING:
                 end_at = datetime.fromisoformat(self.session["end_at"])
                 remaining_seconds = max(
@@ -417,6 +419,7 @@ class PomodoroTimer:
             "phase": phase,
             "status": status,
             "remaining_seconds": remaining_seconds,
+            "duration_seconds": duration_seconds,
             "completed_in_set": completed_in_set,
             "label": label,
             "today": dict(today),

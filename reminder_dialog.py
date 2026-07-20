@@ -4,13 +4,14 @@
 """
 import os
 import uuid
+from datetime import datetime
 from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,
     QPushButton, QHeaderView, QMessageBox, QFormLayout, QLineEdit,
     QTimeEdit, QCheckBox, QComboBox, QTextEdit, QLabel, QWidget,
-    QAbstractItemView
+    QAbstractItemView, QDateEdit
 )
-from PyQt5.QtCore import Qt, QTime, pyqtSignal
+from PyQt5.QtCore import Qt, QDate, QDateTime, QTime, pyqtSignal
 from PyQt5.QtGui import QFont
 
 
@@ -46,7 +47,7 @@ class ReminderFormDialog(QDialog):
     def _setup_ui(self):
         is_edit = self._reminder_data is not None
         self.setWindowTitle("编辑提醒" if is_edit else "新增提醒")
-        self.setFixedSize(420, 580)
+        self.setFixedSize(540, 640)
         self.setModal(True)
 
         layout = QVBoxLayout(self)
@@ -69,9 +70,26 @@ class ReminderFormDialog(QDialog):
         self._time_edit.setTime(QTime(18, 30))
         form_layout.addRow("触发时间", self._time_edit)
 
-        # 仅工作日
-        self._weekday_check = QCheckBox("仅工作日触发（周末和节假日自动跳过）")
-        form_layout.addRow(self._weekday_check)
+        # 触发日期规则
+        self._schedule_combo = QComboBox()
+        self._schedule_combo.addItem("每天", "daily")
+        self._schedule_combo.addItem("仅工作日", "workday")
+        self._schedule_combo.addItem(
+            "仅休息日（周末及法定节假日）",
+            "rest_day",
+        )
+        self._schedule_combo.addItem("指定日期（一次性）", "once")
+        self._schedule_combo.currentIndexChanged.connect(
+            self._on_schedule_type_changed
+        )
+        form_layout.addRow("触发日期", self._schedule_combo)
+
+        self._date_label = QLabel("具体日期")
+        self._date_edit = QDateEdit()
+        self._date_edit.setDisplayFormat("yyyy年MM月dd日")
+        self._date_edit.setCalendarPopup(True)
+        self._date_edit.setDate(QDate.currentDate().addDays(1))
+        form_layout.addRow(self._date_label, self._date_edit)
 
         # 动作类型
         self._action_combo = QComboBox()
@@ -150,6 +168,13 @@ class ReminderFormDialog(QDialog):
             self._populate_form()
         else:
             self._action_combo.setCurrentIndex(1)
+            self._on_schedule_type_changed()
+
+    def _on_schedule_type_changed(self, index=None):
+        """Show the concrete date only for one-time reminders."""
+        is_once = self._schedule_combo.currentData() == "once"
+        self._date_label.setVisible(is_once)
+        self._date_edit.setVisible(is_once)
 
     def _on_action_type_changed(self, index):
         """根据动作类型显示/隐藏URL输入框"""
@@ -167,7 +192,15 @@ class ReminderFormDialog(QDialog):
             self._time_edit.setTime(QTime(h, m))
         except ValueError:
             pass
-        self._weekday_check.setChecked(r.get("weekdays_only", False))
+        schedule_type = r.get("schedule_type")
+        if schedule_type not in {"daily", "workday", "rest_day", "once"}:
+            schedule_type = "workday" if r.get("weekdays_only", False) else "daily"
+        schedule_index = self._schedule_combo.findData(schedule_type)
+        self._schedule_combo.setCurrentIndex(max(schedule_index, 0))
+        date_value = QDate.fromString(r.get("date", ""), "yyyy-MM-dd")
+        if date_value.isValid():
+            self._date_edit.setDate(date_value)
+        self._on_schedule_type_changed()
 
         action_map = {"open_url": 0, "play_animation": 1, "notify_only": 2}
         self._action_combo.setCurrentIndex(action_map.get(r.get("action_type", "open_url"), 0))
@@ -195,6 +228,26 @@ class ReminderFormDialog(QDialog):
             return
 
         time_str = self._time_edit.time().toString("HH:mm")
+        schedule_type = self._schedule_combo.currentData()
+        date_str = self._date_edit.date().toString("yyyy-MM-dd")
+
+        existing_enabled = (
+            self._reminder_data.get("enabled", True)
+            if self._reminder_data is not None
+            else True
+        )
+        if schedule_type == "once" and existing_enabled:
+            scheduled_at = QDateTime(
+                self._date_edit.date(),
+                self._time_edit.time(),
+            )
+            if scheduled_at <= QDateTime.currentDateTime():
+                QMessageBox.warning(
+                    self,
+                    "验证失败",
+                    "一次性提醒时间必须晚于当前时间",
+                )
+                return
 
         action_types = ["open_url", "play_animation", "notify_only"]
         action_idx = self._action_combo.currentIndex()
@@ -207,11 +260,26 @@ class ReminderFormDialog(QDialog):
 
         self._result = dict(self._reminder_data or {})
         self._result.setdefault("id", uuid.uuid4().hex)
+        previous_schedule = (
+            self._reminder_data.get("schedule_type")
+            if self._reminder_data is not None
+            else None
+        )
+        previous_date = (
+            self._reminder_data.get("date")
+            if self._reminder_data is not None
+            else None
+        )
+        previous_time = (
+            self._reminder_data.get("time")
+            if self._reminder_data is not None
+            else None
+        )
         self._result.update({
             "name": name,
             "enabled": self._result.get("enabled", True),
             "time": time_str,
-            "weekdays_only": self._weekday_check.isChecked(),
+            "schedule_type": schedule_type,
             "action_type": action_types[action_idx],
             "action_target": action_target if action_idx == 0 else "",
             "animation": self._anim_combo.currentText(),
@@ -219,6 +287,19 @@ class ReminderFormDialog(QDialog):
             "sound": self._sound_check.isChecked(),
             "sound_file": sound_file,
         })
+        self._result.pop("weekdays_only", None)
+        if schedule_type == "once":
+            self._result["date"] = date_str
+            schedule_changed = (
+                previous_schedule != "once"
+                or previous_date != date_str
+                or previous_time != time_str
+            )
+            if self._reminder_data is None or schedule_changed:
+                self._result["status"] = "pending"
+        else:
+            self._result.pop("date", None)
+            self._result.pop("status", None)
         self.accept()
 
     def get_result(self) -> dict:
@@ -240,7 +321,7 @@ class ReminderDialog(QDialog):
 
     def _setup_ui(self):
         self.setWindowTitle("提醒管理")
-        self.setFixedSize(600, 500)
+        self.setFixedSize(760, 500)
         self.setModal(True)
 
         layout = QVBoxLayout(self)
@@ -248,17 +329,21 @@ class ReminderDialog(QDialog):
 
         # 表格
         self._table = QTableWidget()
-        self._table.setColumnCount(5)
-        self._table.setHorizontalHeaderLabels(["启用", "名称", "时间", "工作日", "操作"])
+        self._table.setColumnCount(6)
+        self._table.setHorizontalHeaderLabels(
+            ["启用", "名称", "时间", "触发规则", "状态", "操作"]
+        )
         self._table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Fixed)
         self._table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
         self._table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Fixed)
         self._table.horizontalHeader().setSectionResizeMode(3, QHeaderView.Fixed)
         self._table.horizontalHeader().setSectionResizeMode(4, QHeaderView.Fixed)
+        self._table.horizontalHeader().setSectionResizeMode(5, QHeaderView.Fixed)
         self._table.setColumnWidth(0, 50)
         self._table.setColumnWidth(2, 70)
-        self._table.setColumnWidth(3, 60)
-        self._table.setColumnWidth(4, 140)
+        self._table.setColumnWidth(3, 190)
+        self._table.setColumnWidth(4, 70)
+        self._table.setColumnWidth(5, 140)
         self._table.verticalHeader().setVisible(False)
         self._table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self._table.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -331,10 +416,33 @@ class ReminderDialog(QDialog):
             # 时间
             self._table.setItem(row, 2, QTableWidgetItem(r.get("time", "")))
 
-            # 仅工作日
-            weekday_item = QTableWidgetItem("✓" if r.get("weekdays_only", False) else "—")
-            weekday_item.setTextAlignment(Qt.AlignCenter)
-            self._table.setItem(row, 3, weekday_item)
+            # 触发规则（兼容旧 weekdays_only 配置）
+            schedule_type = r.get("schedule_type")
+            if schedule_type not in {"daily", "workday", "rest_day", "once"}:
+                schedule_type = "workday" if r.get("weekdays_only", False) else "daily"
+            schedule_labels = {
+                "daily": "每天",
+                "workday": "仅工作日",
+                "rest_day": "仅休息日",
+                "once": f"指定日期 {r.get('date', '未设置')}",
+            }
+            schedule_item = QTableWidgetItem(schedule_labels[schedule_type])
+            schedule_item.setTextAlignment(Qt.AlignCenter)
+            self._table.setItem(row, 3, schedule_item)
+
+            status_labels = {
+                "pending": "待触发",
+                "completed": "已完成",
+                "expired": "已过期",
+            }
+            status_text = (
+                status_labels.get(r.get("status", "pending"), "待触发")
+                if schedule_type == "once"
+                else "—"
+            )
+            status_item = QTableWidgetItem(status_text)
+            status_item.setTextAlignment(Qt.AlignCenter)
+            self._table.setItem(row, 4, status_item)
 
             # 操作按钮
             btn_widget = QWidget()
@@ -376,7 +484,7 @@ class ReminderDialog(QDialog):
 
             btn_layout.addWidget(edit_btn)
             btn_layout.addWidget(del_btn)
-            self._table.setCellWidget(row, 4, btn_widget)
+            self._table.setCellWidget(row, 5, btn_widget)
 
             if r.get("enabled", False):
                 enabled_count += 1
@@ -389,7 +497,32 @@ class ReminderDialog(QDialog):
         config = self._config_mgr.load()
         reminders = config.get("reminders", [])
         if 0 <= row < len(reminders):
-            reminders[row]["enabled"] = (state == Qt.Checked)
+            enabled = state == Qt.Checked
+            reminder = reminders[row]
+            if enabled and reminder.get("schedule_type") == "once":
+                try:
+                    scheduled_at = datetime.strptime(
+                        f"{reminder['date']} {reminder['time']}",
+                        "%Y-%m-%d %H:%M",
+                    )
+                except (KeyError, TypeError, ValueError):
+                    QMessageBox.warning(
+                        self,
+                        "无法启用",
+                        "请先编辑并设置有效的一次性提醒日期",
+                    )
+                    self._refresh_table()
+                    return
+                if scheduled_at <= datetime.now():
+                    QMessageBox.warning(
+                        self,
+                        "无法启用",
+                        "一次性提醒时间已过，请先修改为未来时间",
+                    )
+                    self._refresh_table()
+                    return
+                reminder["status"] = "pending"
+            reminder["enabled"] = enabled
             self._save_and_notify(config)
 
     def _on_add(self):

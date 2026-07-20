@@ -12,6 +12,7 @@ from PyQt5.QtTest import QTest
 from PyQt5.QtWidgets import QApplication
 
 from pending_reminder_store import PendingReminderStore
+from config_manager import ConfigManager
 from pet_window import PetWindow, clamp_to_available_screen
 
 
@@ -261,6 +262,29 @@ class PetWindowModeTests(unittest.TestCase):
         })
 
         self.assertFalse(self.window._weather_action.isEnabled())
+
+    def test_one_time_state_is_persisted_to_config(self):
+        config_manager = ConfigManager(
+            str(Path(self.temp_dir.name) / "config.yaml")
+        )
+        config_manager.save({
+            "reminders": [{
+                "id": "persist-once",
+                "name": "Persist once",
+                "enabled": True,
+                "time": "09:30",
+                "schedule_type": "once",
+                "date": "2026-07-20",
+                "status": "pending",
+            }]
+        })
+        self.window._config_mgr = config_manager
+
+        self.window.persist_one_time_state("persist-once", "completed")
+
+        saved = config_manager.load()["reminders"][0]
+        self.assertFalse(saved["enabled"])
+        self.assertEqual(saved["status"], "completed")
 
     def test_diagnostics_entry_starts_async_check_with_config_manager(self):
         config_manager = Mock()

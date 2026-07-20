@@ -84,6 +84,7 @@ def main():
 
     # 连接信号到主线程的提醒处理
     engine.reminder_triggered.connect(pet_window.trigger_reminder)
+    engine.one_time_state_changed.connect(pet_window.persist_one_time_state)
 
     # --- 设置双向引用 ---
     pet_window._config_mgr = config_mgr

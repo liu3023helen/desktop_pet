@@ -345,6 +345,37 @@ class PetWindow(QWidget):
             self.tray_icon.showMessage("提醒已更新", "新的提醒设置已生效", QSystemTrayIcon.Information, 2000)
             logger.info("提醒引擎已重新加载配置")
 
+    @pyqtSlot(str, str)
+    def persist_one_time_state(self, reminder_id: str, status: str) -> None:
+        """Persist completion or expiry reported by the reminder engine."""
+        if self._config_mgr is None:
+            logger.error("无法保存一次性提醒状态：配置管理器尚未初始化")
+            return
+        if status not in {"completed", "expired"}:
+            logger.warning(f"忽略未知的一次性提醒状态: {status}")
+            return
+
+        config = self._config_mgr.load()
+        reminders = config.get("reminders", [])
+        reminder = next(
+            (
+                item for item in reminders
+                if isinstance(item, dict) and item.get("id") == reminder_id
+            ),
+            None,
+        )
+        if reminder is None:
+            logger.error(f"无法保存一次性提醒状态，未找到 id={reminder_id}")
+            return
+
+        reminder["enabled"] = False
+        reminder["status"] = status
+        if self._config_mgr.save(config):
+            self.config = config
+            logger.info(f"一次性提醒状态已保存: {reminder_id}={status}")
+        else:
+            logger.error(f"保存一次性提醒状态失败: {reminder_id}={status}")
+
     def _sync_time_now(self):
         """手动触发网络时间校准"""
         try:

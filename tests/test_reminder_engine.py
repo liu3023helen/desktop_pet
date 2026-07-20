@@ -76,6 +76,77 @@ class ReminderLoadingTests(unittest.TestCase):
 
         self.assertEqual(fired, ["valid"])
 
+    def test_invalid_schedule_type_is_isolated(self):
+        invalid = make_reminder(name="invalid schedule")
+        invalid["schedule_type"] = "weekends-ish"
+        valid = make_reminder(name="valid schedule")
+        valid["schedule_type"] = "rest_day"
+        engine = ReminderEngine({"reminders": [invalid, valid]})
+
+        engine.load_reminders()
+
+        self.assertEqual(engine._reminders, [valid])
+
+
+class ReminderScheduleRuleTests(unittest.TestCase):
+    @staticmethod
+    def _fire_at(reminder, when):
+        engine = ReminderEngine({"reminders": [reminder]})
+        engine.load_reminders()
+        engine.get_effective_now = lambda: when
+        fired = []
+        engine._trigger_reminder = lambda item: fired.append(item["name"])
+        engine._check_reminders()
+        return fired
+
+    def test_legacy_weekdays_only_remains_supported(self):
+        reminder = make_reminder(reminder_time="09:30")
+        reminder["weekdays_only"] = True
+
+        self.assertEqual(
+            self._fire_at(reminder, datetime(2026, 7, 20, 9, 30, 10)),
+            ["valid"],
+        )
+        self.assertEqual(
+            self._fire_at(reminder, datetime(2026, 7, 18, 9, 30, 10)),
+            [],
+        )
+
+    def test_workday_rule_respects_makeup_workday(self):
+        reminder = make_reminder(reminder_time="09:30")
+        reminder["schedule_type"] = "workday"
+
+        self.assertEqual(
+            self._fire_at(reminder, datetime(2026, 1, 4, 9, 30, 10)),
+            ["valid"],
+        )
+
+    def test_rest_day_rule_includes_weekend_and_statutory_holiday(self):
+        reminder = make_reminder(reminder_time="09:30")
+        reminder["schedule_type"] = "rest_day"
+
+        self.assertEqual(
+            self._fire_at(reminder, datetime(2026, 7, 18, 9, 30, 10)),
+            ["valid"],
+        )
+        self.assertEqual(
+            self._fire_at(reminder, datetime(2026, 1, 2, 9, 30, 10)),
+            ["valid"],
+        )
+
+    def test_rest_day_rule_excludes_weekday_and_makeup_workday(self):
+        reminder = make_reminder(reminder_time="09:30")
+        reminder["schedule_type"] = "rest_day"
+
+        self.assertEqual(
+            self._fire_at(reminder, datetime(2026, 7, 20, 9, 30, 10)),
+            [],
+        )
+        self.assertEqual(
+            self._fire_at(reminder, datetime(2026, 1, 4, 9, 30, 10)),
+            [],
+        )
+
 
 class ReminderDeduplicationTests(unittest.TestCase):
     def test_reminders_sharing_a_minute_trigger_independently(self):

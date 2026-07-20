@@ -90,6 +90,21 @@ def main():
     pet_window._config_mgr = config_mgr
     pet_window._engine = engine
 
+    # 常驻番茄钟控制器，面板关闭或宠物隐藏时仍继续计时。
+    from pomodoro import PomodoroTimer
+    from pomodoro_dialog import PomodoroController
+
+    pomodoro_timer = PomodoroTimer(
+        settings=config.get("pomodoro", {}),
+        now_provider=engine.get_effective_now,
+    )
+    pomodoro_controller = PomodoroController(
+        pomodoro_timer,
+        config_manager=config_mgr,
+        parent=pet_window,
+    )
+    pet_window.set_pomodoro_controller(pomodoro_controller)
+
     engine.start()
     logger.info("提醒引擎已启动")
 
@@ -113,6 +128,7 @@ def main():
     # 4. 显示宠物窗口
     instance_guard.activation_requested.connect(pet_window.activate_from_launch)
     pet_window.show()
+    pet_window.apply_pomodoro_visibility()
     logger.info("宠物窗口已显示")
 
     session_monitor = SessionMonitor()
@@ -123,6 +139,7 @@ def main():
 
     # 清理
     session_monitor.stop()
+    pomodoro_controller.poll_timer.stop()
     engine.stop()
     instance_guard.release()
     logger.info("程序退出")

@@ -30,6 +30,8 @@ DATA_FILES = (
 # PyInstaller's static analysis.
 DYNAMIC_IMPORTS = (
     "diagnostics",
+    "pomodoro",
+    "pomodoro_dialog",
     "reminder_dialog",
     "reminder_engine",
     "time_sync",

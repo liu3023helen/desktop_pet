@@ -13,6 +13,17 @@ def make_reminder(name="valid", reminder_time="09:30"):
     }
 
 
+def make_one_time(reminder_date="2026-07-20", reminder_time="09:30"):
+    reminder = make_reminder(name="one time", reminder_time=reminder_time)
+    reminder.update({
+        "id": "one-time-id",
+        "schedule_type": "once",
+        "date": reminder_date,
+        "status": "pending",
+    })
+    return reminder
+
+
 class ReminderLoadingTests(unittest.TestCase):
     def test_invalid_reminders_are_isolated(self):
         valid = make_reminder()
@@ -75,6 +86,187 @@ class ReminderLoadingTests(unittest.TestCase):
         engine._check_reminders()
 
         self.assertEqual(fired, ["valid"])
+
+    def test_invalid_schedule_type_is_isolated(self):
+        invalid = make_reminder(name="invalid schedule")
+        invalid["schedule_type"] = "weekends-ish"
+        valid = make_reminder(name="valid schedule")
+        valid["schedule_type"] = "rest_day"
+        engine = ReminderEngine({"reminders": [invalid, valid]})
+
+        engine.load_reminders()
+
+        self.assertEqual(engine._reminders, [valid])
+
+    def test_one_time_reminder_requires_id_and_valid_date(self):
+        missing_id = make_one_time()
+        missing_id.pop("id")
+        invalid_date = make_one_time(reminder_date="2026-02-30")
+        valid = make_one_time()
+        engine = ReminderEngine({
+            "reminders": [missing_id, invalid_date, valid]
+        })
+
+        engine.load_reminders()
+
+        self.assertEqual(engine._reminders, [valid])
+
+
+class ReminderScheduleRuleTests(unittest.TestCase):
+    @staticmethod
+    def _fire_at(reminder, when):
+        engine = ReminderEngine({"reminders": [reminder]})
+        engine.load_reminders()
+        engine.get_effective_now = lambda: when
+        fired = []
+        engine._trigger_reminder = lambda item: fired.append(item["name"])
+        engine._check_reminders()
+        return fired
+
+    def test_legacy_weekdays_only_remains_supported(self):
+        reminder = make_reminder(reminder_time="09:30")
+        reminder["weekdays_only"] = True
+
+        self.assertEqual(
+            self._fire_at(reminder, datetime(2026, 7, 20, 9, 30, 10)),
+            ["valid"],
+        )
+        self.assertEqual(
+            self._fire_at(reminder, datetime(2026, 7, 18, 9, 30, 10)),
+            [],
+        )
+
+    def test_workday_rule_respects_makeup_workday(self):
+        reminder = make_reminder(reminder_time="09:30")
+        reminder["schedule_type"] = "workday"
+
+        self.assertEqual(
+            self._fire_at(reminder, datetime(2026, 1, 4, 9, 30, 10)),
+            ["valid"],
+        )
+
+    def test_rest_day_rule_includes_weekend_and_statutory_holiday(self):
+        reminder = make_reminder(reminder_time="09:30")
+        reminder["schedule_type"] = "rest_day"
+
+        self.assertEqual(
+            self._fire_at(reminder, datetime(2026, 7, 18, 9, 30, 10)),
+            ["valid"],
+        )
+        self.assertEqual(
+            self._fire_at(reminder, datetime(2026, 1, 2, 9, 30, 10)),
+            ["valid"],
+        )
+
+    def test_rest_day_rule_excludes_weekday_and_makeup_workday(self):
+        reminder = make_reminder(reminder_time="09:30")
+        reminder["schedule_type"] = "rest_day"
+
+        self.assertEqual(
+            self._fire_at(reminder, datetime(2026, 7, 20, 9, 30, 10)),
+            [],
+        )
+        self.assertEqual(
+            self._fire_at(reminder, datetime(2026, 1, 4, 9, 30, 10)),
+            [],
+        )
+
+
+class OneTimeReminderTests(unittest.TestCase):
+    @staticmethod
+    def _engine_at(reminder, when):
+        engine = ReminderEngine({"reminders": [reminder]})
+        engine.load_reminders()
+        engine.get_effective_now = lambda: when
+        return engine
+
+    def test_one_time_reminder_triggers_and_completes_once(self):
+        reminder = make_one_time()
+        engine = self._engine_at(
+            reminder,
+            datetime(2026, 7, 20, 9, 30, 10),
+        )
+        fired = []
+        states = []
+        engine.reminder_triggered.connect(fired.append)
+        engine.one_time_state_changed.connect(
+            lambda reminder_id, status: states.append((reminder_id, status))
+        )
+
+        engine._check_reminders()
+        engine._check_reminders()
+
+        self.assertEqual(len(fired), 1)
+        self.assertEqual(fired[0]["_runtime_id"], "one-time-id")
+        self.assertEqual(states, [("one-time-id", "completed")])
+        self.assertFalse(reminder["enabled"])
+        self.assertEqual(reminder["status"], "completed")
+
+    def test_one_time_reminder_is_recovered_within_24_hours(self):
+        reminder = make_one_time()
+        engine = self._engine_at(
+            reminder,
+            datetime(2026, 7, 21, 9, 29, 59),
+        )
+        fired = []
+        engine.reminder_triggered.connect(fired.append)
+
+        engine._check_reminders()
+
+        self.assertEqual(len(fired), 1)
+        self.assertEqual(fired[0]["_triggered_at"], "2026-07-20T09:30:00")
+
+    def test_one_time_recovery_window_is_always_24_hours(self):
+        reminder = make_one_time()
+        engine = ReminderEngine({
+            "reminders": [reminder],
+            "engine": {"missed_reminder_retention_hours": 12},
+        })
+        engine.load_reminders()
+        engine.get_effective_now = lambda: datetime(2026, 7, 21, 8, 30, 0)
+        fired = []
+        engine.reminder_triggered.connect(fired.append)
+
+        engine._check_reminders()
+
+        self.assertEqual(len(fired), 1)
+
+    def test_one_time_reminder_expires_after_24_hours(self):
+        reminder = make_one_time()
+        engine = self._engine_at(
+            reminder,
+            datetime(2026, 7, 21, 9, 30, 1),
+        )
+        fired = []
+        states = []
+        engine.reminder_triggered.connect(fired.append)
+        engine.one_time_state_changed.connect(
+            lambda reminder_id, status: states.append((reminder_id, status))
+        )
+
+        engine._check_reminders()
+
+        self.assertEqual(fired, [])
+        self.assertEqual(states, [("one-time-id", "expired")])
+        self.assertFalse(reminder["enabled"])
+        self.assertEqual(reminder["status"], "expired")
+
+    def test_future_one_time_reminder_remains_pending(self):
+        reminder = make_one_time()
+        engine = self._engine_at(
+            reminder,
+            datetime(2026, 7, 20, 9, 29, 59),
+        )
+        states = []
+        engine.one_time_state_changed.connect(
+            lambda reminder_id, status: states.append((reminder_id, status))
+        )
+
+        engine._check_reminders()
+
+        self.assertEqual(states, [])
+        self.assertTrue(reminder["enabled"])
+        self.assertEqual(reminder["status"], "pending")
 
 
 class ReminderDeduplicationTests(unittest.TestCase):

@@ -11,9 +11,22 @@ from typing import Any, Callable, Dict, List, Optional
 from PyQt5.QtCore import pyqtSignal, QThread
 
 from snooze_handler import SnoozeManager
-from workday_utils import is_workday_from_datetime, set_holiday_override
+from workday_utils import (
+    is_rest_day_from_datetime,
+    is_workday_from_datetime,
+    set_holiday_override,
+)
 
 logger = logging.getLogger(__name__)
+
+SCHEDULE_TYPES = {"daily", "workday", "rest_day", "once"}
+SCHEDULE_LABELS = {
+    "daily": "每天",
+    "workday": "仅工作日",
+    "rest_day": "仅休息日",
+    "once": "一次性",
+}
+ONE_TIME_RETENTION = timedelta(hours=24)
 
 
 def _date_key(dt: datetime) -> str:
@@ -56,7 +69,36 @@ def _validate_reminder(reminder: Any) -> Optional[str]:
     ):
         return "id 必须是非空字符串"
 
+    schedule_type = reminder.get("schedule_type")
+    if schedule_type is not None and schedule_type not in SCHEDULE_TYPES:
+        return "schedule_type 必须是 daily、workday、rest_day 或 once"
+
+    if schedule_type == "once":
+        if reminder_id is None:
+            return "一次性提醒必须包含 id"
+        reminder_date = reminder.get("date")
+        if not isinstance(reminder_date, str):
+            return "一次性提醒日期必须是 YYYY-MM-DD 字符串"
+        try:
+            parsed_date = datetime.strptime(reminder_date, "%Y-%m-%d")
+        except ValueError:
+            return "一次性提醒日期必须是有效的 YYYY-MM-DD"
+        if parsed_date.strftime("%Y-%m-%d") != reminder_date:
+            return "一次性提醒日期必须使用 YYYY-MM-DD 格式"
+
+    status = reminder.get("status")
+    if status is not None and status not in {"pending", "completed", "expired"}:
+        return "status 必须是 pending、completed 或 expired"
+
     return None
+
+
+def _schedule_type(reminder: Dict[str, Any]) -> str:
+    """Resolve the new rule field while preserving legacy configurations."""
+    configured = reminder.get("schedule_type")
+    if configured in SCHEDULE_TYPES:
+        return configured
+    return "workday" if reminder.get("weekdays_only", False) else "daily"
 
 
 def _reminder_identity(reminder: Dict[str, Any], index: int) -> str:
@@ -82,6 +124,7 @@ class ReminderEngine(QThread):
 
     # 信号：提醒触发
     reminder_triggered = pyqtSignal(dict)  # 提醒配置字典
+    one_time_state_changed = pyqtSignal(str, str)  # reminder id, completed/expired
 
     def __init__(self, config: Dict[str, Any], action_handlers: Optional[Dict[str, Callable]] = None):
         super().__init__()
@@ -168,8 +211,8 @@ class ReminderEngine(QThread):
         enabled = [r for r in self._reminders if r.get("enabled", False)]
         logger.info(f"加载了 {len(enabled)} 个启用的提醒")
         for r in enabled:
-            weekdays = "仅工作日" if r.get("weekdays_only", False) else "每天"
-            logger.info(f"  - {r['name']}: {r['time']} ({r.get('action_type', 'unknown')}) [{weekdays}]")
+            schedule = SCHEDULE_LABELS[_schedule_type(r)]
+            logger.info(f"  - {r['name']}: {r['time']} ({r.get('action_type', 'unknown')}) [{schedule}]")
 
     def reload_reminders(self, new_config: Dict[str, Any]) -> None:
         """外部调用：重新加载配置（管理面板修改后）"""
@@ -264,6 +307,32 @@ class ReminderEngine(QThread):
                 logger.warning(f"无效的时间格式: {reminder_time}")
                 continue
 
+            schedule_type = _schedule_type(reminder)
+            if schedule_type == "once":
+                scheduled_at = datetime.combine(
+                    datetime.strptime(reminder["date"], "%Y-%m-%d").date(),
+                    parsed_time.time(),
+                )
+                if scheduled_at > now:
+                    continue
+                if now - scheduled_at > ONE_TIME_RETENTION:
+                    self._set_one_time_state(reminder, "expired")
+                    continue
+
+                trigger_key = _trigger_key(
+                    reminder,
+                    reminder_index,
+                    _date_key(scheduled_at),
+                )
+                with self._lock:
+                    if trigger_key in self._triggered_today:
+                        continue
+                    self._triggered_today.add(trigger_key)
+                due_reminders.append(
+                    (scheduled_at, reminder_index, reminder, reminder_name)
+                )
+                continue
+
             candidate_date = window_start.date()
             while candidate_date <= now.date():
                 scheduled_at = datetime.combine(
@@ -277,9 +346,12 @@ class ReminderEngine(QThread):
                     and scheduled_minute_end > window_start
                 ):
                     continue
-                if (
-                    reminder.get("weekdays_only", False)
-                    and not is_workday_from_datetime(scheduled_at)
+                if schedule_type == "workday" and not is_workday_from_datetime(
+                    scheduled_at
+                ):
+                    continue
+                if schedule_type == "rest_day" and not is_rest_day_from_datetime(
+                    scheduled_at
                 ):
                     continue
 
@@ -299,11 +371,23 @@ class ReminderEngine(QThread):
         due_reminders.sort(key=lambda item: (item[0], item[1]))
         for scheduled_at, _, reminder, reminder_name in due_reminders:
             logger.info(f"触发提醒: {reminder_name}")
+            if _schedule_type(reminder) == "once":
+                self._set_one_time_state(reminder, "completed")
             reminder["_triggered_at"] = scheduled_at.isoformat(timespec="seconds")
             try:
                 self._trigger_reminder(reminder)
             finally:
                 reminder.pop("_triggered_at", None)
+
+    def _set_one_time_state(
+        self,
+        reminder: Dict[str, Any],
+        status: str,
+    ) -> None:
+        """Disable a consumed one-time reminder and request durable storage."""
+        reminder["enabled"] = False
+        reminder["status"] = status
+        self.one_time_state_changed.emit(reminder["id"], status)
 
     def _trigger_reminder(self, reminder: Dict[str, Any]) -> None:
         """触发单个提醒"""

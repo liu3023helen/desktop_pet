@@ -12,6 +12,44 @@ from utils import get_app_dir
 logger = logging.getLogger(__name__)
 
 
+# Published mainland China holiday arrangements. User configuration always
+# takes precedence, so corrections can be shipped without replacing the app.
+BUILTIN_HOLIDAY_OVERRIDE = {
+    # 2026 New Year's Day
+    "2026-01-01": False,
+    "2026-01-02": False,
+    "2026-01-03": False,
+    "2026-01-04": True,
+    # 2026 Spring Festival
+    **{f"2026-02-{day:02d}": False for day in range(15, 24)},
+    "2026-02-14": True,
+    "2026-02-28": True,
+    # 2026 Qingming Festival
+    "2026-04-04": False,
+    "2026-04-05": False,
+    "2026-04-06": False,
+    # 2026 Labour Day
+    **{f"2026-05-{day:02d}": False for day in range(1, 6)},
+    "2026-05-09": True,
+    # 2026 Dragon Boat Festival
+    "2026-06-19": False,
+    "2026-06-20": False,
+    "2026-06-21": False,
+    # 2026 Mid-Autumn Festival
+    "2026-09-25": False,
+    "2026-09-26": False,
+    "2026-09-27": False,
+    # 2026 National Day
+    **{f"2026-10-{day:02d}": False for day in range(1, 8)},
+    "2026-09-20": True,
+    "2026-10-10": True,
+}
+BUILTIN_CALENDAR_YEARS = frozenset(
+    int(key[:4]) for key in BUILTIN_HOLIDAY_OVERRIDE
+)
+_WARNED_MISSING_YEARS = set()
+
+
 def _get_data_dir():
     """获取 data 目录路径"""
     return get_app_dir() / "data"
@@ -115,7 +153,14 @@ def is_workday_override(d: Optional[date] = None) -> Optional[bool]:
     if d is None:
         d = date.today()
     key = d.strftime("%Y-%m-%d")
-    return HOLIDAY_OVERRIDE.get(key)
+    if key in HOLIDAY_OVERRIDE:
+        return HOLIDAY_OVERRIDE[key]
+    return BUILTIN_HOLIDAY_OVERRIDE.get(key)
+
+
+def has_builtin_calendar(year: int) -> bool:
+    """Return whether an official built-in calendar covers the given year."""
+    return year in BUILTIN_CALENDAR_YEARS
 
 
 def is_workday(d: Optional[date] = None) -> bool:
@@ -125,6 +170,17 @@ def is_workday(d: Optional[date] = None) -> bool:
     """
     if d is None:
         d = date.today()
+
+    if (
+        BUILTIN_CALENDAR_YEARS
+        and d.year > max(BUILTIN_CALENDAR_YEARS)
+        and d.year not in _WARNED_MISSING_YEARS
+    ):
+        logger.warning(
+            f"未内置 {d.year} 年法定节假日日历，暂按周一至周五判断；"
+            "可在 holidays 配置中手工覆盖"
+        )
+        _WARNED_MISSING_YEARS.add(d.year)
 
     # 先检查节假日覆盖
     override = is_workday_override(d)
@@ -140,6 +196,18 @@ def is_workday_from_datetime(dt: Optional[datetime] = None) -> bool:
     if dt is None:
         dt = datetime.now()
     return is_workday(dt.date())
+
+
+def is_rest_day(d: Optional[date] = None) -> bool:
+    """Return True for weekends and statutory holidays, excluding work swaps."""
+    return not is_workday(d)
+
+
+def is_rest_day_from_datetime(dt: Optional[datetime] = None) -> bool:
+    """Return whether the date portion of a datetime is a rest day."""
+    if dt is None:
+        dt = datetime.now()
+    return is_rest_day(dt.date())
 
 
 def get_next_workday(d: Optional[date] = None, days_ahead: int = 1) -> date:

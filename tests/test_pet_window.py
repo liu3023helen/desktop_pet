@@ -12,7 +12,10 @@ from PyQt5.QtTest import QTest
 from PyQt5.QtWidgets import QApplication
 
 from pending_reminder_store import PendingReminderStore
+from config_manager import ConfigManager
 from pet_window import PetWindow, clamp_to_available_screen
+from pomodoro import PomodoroStore, PomodoroTimer
+from pomodoro_dialog import PomodoroController
 
 
 class PetWindowModeTests(unittest.TestCase):
@@ -37,12 +40,28 @@ class PetWindowModeTests(unittest.TestCase):
         )
 
     def tearDown(self):
+        if self.window._pomodoro_controller is not None:
+            self.window._pomodoro_controller.poll_timer.stop()
         self.window.pending_reminder_timer.stop()
         self.window.wander_timer.stop()
         self.window.animation_player.stop()
         self.window.bubble.close()
         self.window.tray_icon.hide()
         self.window.close()
+
+    def _attach_pomodoro(self, settings=None):
+        config_manager = ConfigManager(
+            str(Path(self.temp_dir.name) / "config.yaml")
+        )
+        timer = PomodoroTimer(
+            settings=settings,
+            store=PomodoroStore(Path(self.temp_dir.name) / "pomodoro.yaml"),
+            now_provider=lambda: self.now,
+        )
+        controller = PomodoroController(timer, config_manager)
+        self.window._config_mgr = config_manager
+        self.window.set_pomodoro_controller(controller)
+        return controller
 
     def test_mode_toggle_round_trip_updates_behavior(self):
         self.assertTrue(self.window._quiet_mode)
@@ -94,6 +113,211 @@ class PetWindowModeTests(unittest.TestCase):
         self.assertTrue(self.window._quiet_mode)
         self.assertFalse(self.window.wander_timer.isActive())
         self.assertEqual(self.window.pos(), original_position)
+
+    def test_focus_start_hides_visible_pet_by_default(self):
+        controller = self._attach_pomodoro()
+        self.window.show()
+
+        controller.perform_primary(minutes=25)
+        self.app.processEvents()
+
+        self.assertFalse(self.window.isVisible())
+        self.assertIn("专注", self.window._pomodoro_status_action.text())
+        self.assertEqual(self.window._pomodoro_toggle_action.text(), "暂停")
+
+    def test_show_from_tray_overrides_focus_auto_hide(self):
+        controller = self._attach_pomodoro()
+        self.window.show()
+        controller.perform_primary(minutes=25)
+
+        self.window._show_from_tray()
+        controller.emit_state()
+
+        self.assertTrue(self.window.isVisible())
+        self.assertFalse(self.window._should_hide_for_focus())
+
+    def test_reminder_during_focus_rehides_pet_after_acknowledge(self):
+        controller = self._attach_pomodoro()
+        self.window.show()
+        controller.perform_primary(minutes=25)
+        self.window.trigger_reminder({
+            "id": "focus-interruption",
+            "name": "Important",
+            "message": "Handle this",
+            "action_type": "play_animation",
+            "animation": "cheer",
+            "sound": False,
+        })
+
+        self.assertTrue(self.window.isVisible())
+
+        self.window._handle_bubble_action("acknowledge")
+        self.app.processEvents()
+
+        self.assertFalse(self.window.isVisible())
+
+    @patch("pet_window.play_reminder_sound")
+    def test_focus_completion_shows_pet_animation_and_stats(self, play_sound):
+        controller = self._attach_pomodoro({"focus_minutes": 1})
+        self.window.show()
+        controller.perform_primary(minutes=1)
+        self.now += timedelta(minutes=1)
+
+        controller.poll()
+        self.app.processEvents()
+
+        self.assertTrue(self.window.isVisible())
+        self.assertEqual(self.window.bubble.mode, "result")
+        self.assertIn("专注完成啦", self.window.bubble.text())
+        self.assertEqual(controller.snapshot()["today"]["completed"], 1)
+        play_sound.assert_called_once_with(None)
+
+    @patch("pet_window.play_reminder_sound")
+    def test_pomodoro_completion_waits_for_active_reminder(self, play_sound):
+        controller = self._attach_pomodoro({"focus_minutes": 1})
+        self.window.trigger_reminder({
+            "id": "priority-reminder",
+            "name": "Priority",
+            "message": "Reminder first",
+            "action_type": "notify_only",
+            "sound": False,
+        })
+        controller.perform_primary(minutes=1)
+        self.now += timedelta(minutes=1)
+
+        controller.poll()
+
+        self.assertEqual(self.window.bubble.mode, "reminder")
+        self.assertIsNotNone(self.window._deferred_pomodoro_event)
+        play_sound.assert_not_called()
+
+        self.window._handle_bubble_action("acknowledge")
+
+        self.assertEqual(self.window.bubble.mode, "result")
+        self.assertIn("专注完成啦", self.window.bubble.text())
+        play_sound.assert_called_once_with(None)
+
+    def test_running_break_shows_pet(self):
+        controller = self._attach_pomodoro({"focus_minutes": 1})
+        self.window.show()
+        controller.perform_primary(minutes=1)
+        self.now += timedelta(minutes=1)
+        controller.poll()
+
+        controller.perform_primary()
+
+        self.assertEqual(controller.snapshot()["phase"], "short_break")
+        self.assertEqual(controller.snapshot()["status"], "running")
+        self.assertTrue(self.window.isVisible())
+
+    def test_restored_running_focus_hides_pet_after_initial_show(self):
+        controller = self._attach_pomodoro()
+        controller.timer.start_focus(minutes=25)
+        controller.emit_state()
+
+        self.window.show()
+        self.window.apply_pomodoro_visibility()
+
+        self.assertFalse(self.window.isVisible())
+
+    @patch("pet_window.play_reminder_sound")
+    def test_pomodoro_completion_while_locked_waits_for_unlock(self, play_sound):
+        controller = self._attach_pomodoro({"focus_minutes": 1})
+        controller.perform_primary(minutes=1)
+        self.window.set_session_locked(True)
+        self.now += timedelta(minutes=1)
+
+        controller.poll()
+
+        self.assertIsNotNone(self.window._deferred_pomodoro_event)
+        self.assertEqual(self.window.bubble.mode, "hidden")
+        play_sound.assert_not_called()
+
+        self.window.set_session_locked(False)
+
+        self.assertIsNone(self.window._deferred_pomodoro_event)
+        self.assertEqual(self.window.bubble.mode, "result")
+        play_sound.assert_called_once_with(None)
+
+    def test_pomodoro_celebration_restores_tray_hidden_preference(self):
+        controller = self._attach_pomodoro({"focus_minutes": 1})
+        self.window.show()
+        self.window._hide_to_tray()
+        controller.perform_primary(minutes=1)
+        self.now += timedelta(minutes=1)
+        controller.poll()
+
+        self.assertTrue(self.window.isVisible())
+
+        self.window._finish_pomodoro_celebration()
+
+        self.assertFalse(self.window.isVisible())
+
+    def test_animation_reminder_temporarily_shows_tray_hidden_pet(self):
+        engine = Mock()
+        self.window._engine = engine
+        self.window.show()
+        self.window._hide_to_tray()
+
+        self.window.trigger_reminder({
+            "id": "tray-animation",
+            "name": "Tray animation",
+            "message": "Show the pet",
+            "action_type": "play_animation",
+            "animation": "cheer",
+            "sound": False,
+        })
+        self.app.processEvents()
+
+        self.assertTrue(self.window.isVisible())
+        self.assertTrue(self.window._hidden_to_tray)
+
+        self.window._handle_bubble_action("acknowledge")
+        self.app.processEvents()
+
+        self.assertFalse(self.window.isVisible())
+        self.assertTrue(self.window._hidden_to_tray)
+
+    def test_animation_reminder_keeps_normally_visible_pet_visible(self):
+        self.window.show()
+
+        self.window.trigger_reminder({
+            "id": "visible-animation",
+            "name": "Visible animation",
+            "message": "Stay visible",
+            "action_type": "play_animation",
+            "animation": "cheer",
+            "sound": False,
+        })
+        self.window._handle_bubble_action("acknowledge")
+        self.app.processEvents()
+
+        self.assertTrue(self.window.isVisible())
+        self.assertFalse(self.window._hidden_to_tray)
+
+    def test_tray_hidden_pet_stays_visible_until_reminder_queue_drains(self):
+        self.window.show()
+        self.window._hide_to_tray()
+        for reminder_id in ("queued-first", "queued-second"):
+            self.window.trigger_reminder({
+                "id": reminder_id,
+                "name": reminder_id,
+                "message": reminder_id,
+                "action_type": "play_animation",
+                "animation": "cheer",
+                "sound": False,
+            })
+
+        self.window._handle_bubble_action("acknowledge")
+        self.app.processEvents()
+
+        self.assertEqual(self.window._active_reminder["id"], "queued-second")
+        self.assertTrue(self.window.isVisible())
+
+        self.window._handle_bubble_action("acknowledge")
+        self.app.processEvents()
+
+        self.assertFalse(self.window.isVisible())
 
     def test_reminder_bubble_snooze_stops_animation_and_restores_quiet_mode(self):
         engine = Mock()
@@ -195,6 +419,29 @@ class PetWindowModeTests(unittest.TestCase):
         })
 
         self.assertFalse(self.window._weather_action.isEnabled())
+
+    def test_one_time_state_is_persisted_to_config(self):
+        config_manager = ConfigManager(
+            str(Path(self.temp_dir.name) / "config.yaml")
+        )
+        config_manager.save({
+            "reminders": [{
+                "id": "persist-once",
+                "name": "Persist once",
+                "enabled": True,
+                "time": "09:30",
+                "schedule_type": "once",
+                "date": "2026-07-20",
+                "status": "pending",
+            }]
+        })
+        self.window._config_mgr = config_manager
+
+        self.window.persist_one_time_state("persist-once", "completed")
+
+        saved = config_manager.load()["reminders"][0]
+        self.assertFalse(saved["enabled"])
+        self.assertEqual(saved["status"], "completed")
 
     def test_diagnostics_entry_starts_async_check_with_config_manager(self):
         config_manager = Mock()

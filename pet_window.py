@@ -143,7 +143,14 @@ class PetWindow(QWidget):
         self._active_record = None
         self._active_reminder = None
         self._deferred_bubble = None
+        self._deferred_pomodoro_event = None
         self._session_locked = False
+        self._hidden_to_tray = False
+        self._pomodoro_controller = None
+        self._pomodoro_dialog = None
+        self._pomodoro_snapshot = None
+        self._pomodoro_auto_hide_overridden = False
+        self._pomodoro_celebrating = False
         self.pending_reminder_timer = QTimer(self)
         self.pending_reminder_timer.setInterval(1000)
         self.pending_reminder_timer.timeout.connect(
@@ -216,11 +223,11 @@ class PetWindow(QWidget):
         tray_menu = QMenu()
 
         show_action = QAction("显示", self)
-        show_action.triggered.connect(self.show)
+        show_action.triggered.connect(self._show_from_tray)
         tray_menu.addAction(show_action)
 
         hide_action = QAction("隐藏到托盘", self)
-        hide_action.triggered.connect(self.hide)
+        hide_action.triggered.connect(self._hide_to_tray)
         tray_menu.addAction(hide_action)
 
         tray_menu.addSeparator()
@@ -236,6 +243,29 @@ class PetWindow(QWidget):
         tray_menu.addAction(self._autostart_action)
 
         # --- 二期新增菜单项 ---
+        tray_menu.addSeparator()
+
+        pomodoro_menu = tray_menu.addMenu("番茄钟")
+        self._pomodoro_status_action = QAction("尚未开始", self)
+        self._pomodoro_status_action.setEnabled(False)
+        pomodoro_menu.addAction(self._pomodoro_status_action)
+        pomodoro_menu.addSeparator()
+        open_pomodoro_action = QAction("打开番茄钟", self)
+        open_pomodoro_action.triggered.connect(self._open_pomodoro_dialog)
+        pomodoro_menu.addAction(open_pomodoro_action)
+        self._pomodoro_toggle_action = QAction("开始专注", self)
+        self._pomodoro_toggle_action.setEnabled(False)
+        self._pomodoro_toggle_action.triggered.connect(
+            self._pomodoro_primary_action
+        )
+        pomodoro_menu.addAction(self._pomodoro_toggle_action)
+        self._pomodoro_stop_action = QAction("结束番茄钟", self)
+        self._pomodoro_stop_action.setEnabled(False)
+        self._pomodoro_stop_action.triggered.connect(
+            self._pomodoro_stop
+        )
+        pomodoro_menu.addAction(self._pomodoro_stop_action)
+
         tray_menu.addSeparator()
 
         manage_action = QAction("管理提醒", self)
@@ -269,8 +299,204 @@ class PetWindow(QWidget):
 
     def _tray_activated(self, reason):
         if reason == QSystemTrayIcon.DoubleClick:
-            self.show()
-            self.activateWindow()
+            self._show_from_tray()
+
+    def _show_from_tray(self) -> None:
+        """Show the pet and keep it visible after the current reminder."""
+        self._hidden_to_tray = False
+        self._pomodoro_auto_hide_overridden = True
+        self.show()
+        self.raise_()
+
+    def _hide_to_tray(self) -> None:
+        """Remember that the user wants the idle pet hidden."""
+        self._hidden_to_tray = True
+        self.hide()
+
+    def _restore_idle_visibility(self) -> None:
+        """Restore the user's tray preference after the reminder queue drains."""
+        if self._active_record is not None:
+            return
+        if self._hidden_to_tray or self._should_hide_for_focus():
+            self.hide()
+
+    def set_pomodoro_controller(self, controller) -> None:
+        """Attach the application-wide Pomodoro controller."""
+        self._pomodoro_controller = controller
+        controller.state_changed.connect(self._on_pomodoro_state_changed)
+        controller.event_emitted.connect(self._on_pomodoro_event)
+        self._on_pomodoro_state_changed(controller.snapshot())
+
+    def _open_pomodoro_dialog(self) -> None:
+        if self._pomodoro_controller is None:
+            QMessageBox.warning(self, "番茄钟未初始化", "番茄钟控制器尚未初始化")
+            return
+        if self._pomodoro_dialog is None:
+            from pomodoro_dialog import PomodoroDialog
+
+            self._pomodoro_dialog = PomodoroDialog(
+                self._pomodoro_controller,
+                self,
+            )
+        self._pomodoro_dialog.show()
+        self._pomodoro_dialog.raise_()
+        self._pomodoro_dialog.activateWindow()
+
+    def _pomodoro_primary_action(self) -> None:
+        if self._pomodoro_controller is not None:
+            self._pomodoro_controller.perform_primary()
+
+    def _pomodoro_stop(self) -> None:
+        if self._pomodoro_controller is not None:
+            self._pomodoro_controller.stop()
+
+    def _should_hide_for_focus(self) -> bool:
+        if self._pomodoro_controller is None or self._pomodoro_snapshot is None:
+            return False
+        return (
+            self._pomodoro_snapshot.get("phase") == "focus"
+            and self._pomodoro_snapshot.get("status") == "running"
+            and self._pomodoro_controller.timer.settings["hide_during_focus"]
+            and not self._pomodoro_auto_hide_overridden
+        )
+
+    @staticmethod
+    def _format_pomodoro_time(seconds: int) -> str:
+        minutes, seconds = divmod(max(0, int(seconds)), 60)
+        return f"{minutes:02d}:{seconds:02d}"
+
+    @pyqtSlot(dict)
+    def _on_pomodoro_state_changed(self, snapshot: dict) -> None:
+        previous = self._pomodoro_snapshot
+        self._pomodoro_snapshot = dict(snapshot)
+        phase = snapshot["phase"]
+        status = snapshot["status"]
+        entering_focus = (
+            phase == "focus"
+            and status == "running"
+            and (
+                previous is None
+                or previous.get("phase") != "focus"
+                or previous.get("status") != "running"
+            )
+        )
+        if entering_focus:
+            self._pomodoro_auto_hide_overridden = False
+
+        phase_labels = {
+            "focus": "专注",
+            "short_break": "短休息",
+            "long_break": "长休息",
+        }
+        time_text = self._format_pomodoro_time(snapshot["remaining_seconds"])
+        if status == "idle":
+            status_text = "尚未开始"
+            toggle_text = "开始专注"
+        elif status == "running":
+            status_text = f"{phase_labels[phase]} · {time_text}"
+            toggle_text = "暂停"
+        elif status == "paused":
+            status_text = f"已暂停 · {time_text}"
+            toggle_text = "继续"
+        else:
+            status_text = f"等待开始{phase_labels[phase]}"
+            toggle_text = "开始下一阶段"
+        self._pomodoro_status_action.setText(status_text)
+        self._pomodoro_toggle_action.setText(toggle_text)
+        self._pomodoro_toggle_action.setEnabled(True)
+        self._pomodoro_stop_action.setEnabled(status != "idle")
+        pet_name = self._pet_config.get("name", "小新")
+        self.tray_icon.setToolTip(
+            pet_name if status == "idle" else f"{pet_name} · {status_text}"
+        )
+
+        if entering_focus and self._should_hide_for_focus():
+            self._enter_quiet_mode()
+            self.hide()
+        elif status == "running" and phase != "focus":
+            if not self._session_locked and self._active_record is None:
+                self.show()
+                self.raise_()
+                self._enter_active_mode()
+        elif status == "idle":
+            self._pomodoro_auto_hide_overridden = False
+            self._enter_quiet_mode()
+            self._restore_idle_visibility()
+
+    def apply_pomodoro_visibility(self) -> None:
+        """Apply restored timer state after the main window is first shown."""
+        if self._should_hide_for_focus():
+            self._enter_quiet_mode()
+            self.hide()
+
+    @pyqtSlot(object)
+    def _on_pomodoro_event(self, event) -> None:
+        if self._active_record is not None or self._session_locked:
+            self._deferred_pomodoro_event = event
+            return
+        self._display_pomodoro_event(event)
+
+    def _display_pomodoro_event(self, event) -> None:
+        if event.completed_phase == "focus":
+            break_minutes = (
+                self._pomodoro_controller.timer.settings[
+                    "long_break_minutes"
+                    if event.next_phase == "long_break"
+                    else "short_break_minutes"
+                ]
+            )
+            message = f"专注完成啦！小新批准你休息 {break_minutes} 分钟~"
+            if not event.auto_started:
+                message += "\n打开番茄钟开始休息吧！"
+        else:
+            message = "休息结束啦！该继续专注了~"
+            if not event.auto_started:
+                message += "\n打开番茄钟开始下一轮吧！"
+
+        self.show()
+        self.raise_()
+        self._enter_active_mode()
+        screen = _available_geometry_for(self)
+        self.move(
+            screen.left() + (screen.width() - self.width()) // 2,
+            screen.top() + (screen.height() - self.height()) // 2,
+        )
+        if self.animation_player.is_animation_loaded("cheer") or self.animation_player.load_animation("cheer"):
+            self.animation_player.play("cheer", fps=3, loop=True)
+        play_reminder_sound(None)
+        self._show_result_bubble(message)
+        self.tray_icon.showMessage("番茄钟", message.splitlines()[0])
+        self._pomodoro_celebrating = True
+        QTimer.singleShot(
+            BubbleWidget.RESULT_DURATION_MS,
+            self._finish_pomodoro_celebration,
+        )
+
+    def _show_deferred_pomodoro_event(self) -> bool:
+        if (
+            self._deferred_pomodoro_event is None
+            or self._active_record is not None
+            or self._session_locked
+        ):
+            return False
+        event = self._deferred_pomodoro_event
+        self._deferred_pomodoro_event = None
+        self._display_pomodoro_event(event)
+        return True
+
+    def _finish_pomodoro_celebration(self) -> None:
+        if not self._pomodoro_celebrating or self._active_record is not None:
+            return
+        self._pomodoro_celebrating = False
+        self._enter_quiet_mode()
+        if self._pomodoro_snapshot is not None:
+            if (
+                self._pomodoro_snapshot.get("status") == "running"
+                and self._pomodoro_snapshot.get("phase") != "focus"
+            ):
+                self._enter_active_mode()
+            elif self._hidden_to_tray or self._should_hide_for_focus():
+                self.hide()
 
     def _toggle_quiet_mode(self, checked):
         """切换安静模式"""
@@ -289,6 +515,8 @@ class PetWindow(QWidget):
 
     def _quit_app(self):
         logger.info("用户退出程序")
+        if self._pomodoro_controller is not None:
+            self._pomodoro_controller.poll_timer.stop()
         self.animation_player.stop()
         self.wander_timer.stop()
         self.tray_icon.hide()
@@ -297,8 +525,7 @@ class PetWindow(QWidget):
     @pyqtSlot()
     def activate_from_launch(self) -> None:
         """Bring the existing instance forward after a repeated launch."""
-        self.show()
-        self.raise_()
+        self._show_from_tray()
         if self.bubble.isVisible():
             self.bubble.raise_()
         logger.info("已有宠物窗口已响应重复启动请求")
@@ -329,6 +556,37 @@ class PetWindow(QWidget):
             self._engine.reload_reminders(new_config)
             self.tray_icon.showMessage("提醒已更新", "新的提醒设置已生效", QSystemTrayIcon.Information, 2000)
             logger.info("提醒引擎已重新加载配置")
+
+    @pyqtSlot(str, str)
+    def persist_one_time_state(self, reminder_id: str, status: str) -> None:
+        """Persist completion or expiry reported by the reminder engine."""
+        if self._config_mgr is None:
+            logger.error("无法保存一次性提醒状态：配置管理器尚未初始化")
+            return
+        if status not in {"completed", "expired"}:
+            logger.warning(f"忽略未知的一次性提醒状态: {status}")
+            return
+
+        config = self._config_mgr.load()
+        reminders = config.get("reminders", [])
+        reminder = next(
+            (
+                item for item in reminders
+                if isinstance(item, dict) and item.get("id") == reminder_id
+            ),
+            None,
+        )
+        if reminder is None:
+            logger.error(f"无法保存一次性提醒状态，未找到 id={reminder_id}")
+            return
+
+        reminder["enabled"] = False
+        reminder["status"] = status
+        if self._config_mgr.save(config):
+            self.config = config
+            logger.info(f"一次性提醒状态已保存: {reminder_id}={status}")
+        else:
+            logger.error(f"保存一次性提醒状态失败: {reminder_id}={status}")
 
     def _sync_time_now(self):
         """手动触发网络时间校准"""
@@ -563,7 +821,8 @@ class PetWindow(QWidget):
             None,
         )
         if record is None:
-            self._show_deferred_bubble()
+            if not self._show_deferred_pomodoro_event():
+                self._show_deferred_bubble()
             return
 
         record["status"] = "active"
@@ -621,6 +880,11 @@ class PetWindow(QWidget):
         logger.info(f"触发提醒: {name}, 消息: {message}")
 
         if play_animation:
+            # A tray-hidden pet must still appear for animation reminders. Keep
+            # the user's idle visibility preference so it can be restored.
+            self.show()
+            self.raise_()
+
             # 1. 进入活跃模式（开始闲逛）
             self._enter_active_mode()
 
@@ -693,6 +957,7 @@ class PetWindow(QWidget):
         self.bubble.hide_bubble()
         self._enter_quiet_mode()
         self._process_pending_reminders()
+        self._restore_idle_visibility()
 
     @pyqtSlot(bool)
     def set_session_locked(self, locked: bool) -> None:
@@ -704,6 +969,7 @@ class PetWindow(QWidget):
         if locked:
             self.bubble.hide_bubble()
             self._enter_quiet_mode()
+            self._restore_idle_visibility()
             logger.info("会话已锁定，暂停提醒展示")
             return
 
@@ -731,7 +997,7 @@ class PetWindow(QWidget):
     # --- 右键菜单 ---
     def contextMenuEvent(self, event):
         menu = QMenu(self)
-        menu.addAction("隐藏", self.hide)
+        menu.addAction("隐藏", self._hide_to_tray)
 
         quiet_action = menu.addAction(
             "安静模式" if self._quiet_mode else "活跃模式"

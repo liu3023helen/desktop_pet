@@ -30,6 +30,8 @@ class BuildScriptTests(unittest.TestCase):
             self.assertIn(f"--add-data={source}:{destination}", command)
         for dynamic_import in module.DYNAMIC_IMPORTS:
             self.assertIn(f"--hidden-import={dynamic_import}", command)
+        self.assertIn("pomodoro", module.DYNAMIC_IMPORTS)
+        self.assertIn("pomodoro_dialog", module.DYNAMIC_IMPORTS)
         self.assertFalse(any(arg == "--collect-all=PyQt5" for arg in command))
 
     def test_release_command_is_windowed(self):
